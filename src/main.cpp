@@ -59,6 +59,8 @@ static bool publishNow = true;       // nächsten Status sofort senden
 static uint32_t lastCommandMs = 0;
 static bool snapRequested = false;    // Foto per MQTT senden
 static uint32_t snapTs = 0;           // Zeitpunkt des letzten Fotos
+static uint32_t liveUntilMs = 0;      // Live-Ansicht aktiv bis (0 = aus)
+static uint32_t liveLastFrameMs = 0;
 static uint32_t lastPublishMs = 0;
 static uint32_t mqttRetryMs = 0;
 static uint32_t mqttRetryDelay = 5000;
@@ -139,7 +141,7 @@ static String resetEstop() {
 // -------------------------------------------------------------- Befehle -----
 // Gemeinsame Befehle für MQTT, Weboberfläche und seriellen Monitor:
 //   on [minuten] | off | level 1-10 | temp 8-36 | thermo <°C>|off
-//   runtime <minuten> | light on|off|toggle | snap | estop | reset | status
+//   runtime <minuten> | light on|off|toggle | snap | live [sek]|off | estop | reset | status
 static String handleCommand(String line) {
   line.trim();
   line.toLowerCase();
@@ -156,6 +158,20 @@ static String handleCommand(String line) {
   }
   if (c == "reset") return resetEstop();
   if (c == "status") return "ok";
+  if (c == "live") {
+    if (!Camera::enabled()) return "err: keine Kamera eingerichtet (CAM_HOST in secrets.h)";
+    if (a == "off" || a == "aus" || a == "0") {
+      liveUntilMs = 0;
+      return "ok: live aus";
+    }
+    int s = a.length() ? a.toInt() : 60;
+    s = constrain(s, 5, CAM_LIVE_MAX_S);
+    liveUntilMs = millis() + s * 1000UL;
+    if (!liveUntilMs) liveUntilMs = 1;
+    lastCommandMs = 0;  // Live-Befehle lösen keine Status-Updates aus
+    publishNow = false;
+    return "ok: live " + String(s) + " s";
+  }
   if (c == "snap" || c == "foto") {
     if (!Camera::enabled()) return "err: keine Kamera eingerichtet (CAM_HOST in secrets.h)";
     snapRequested = true;
@@ -325,14 +341,16 @@ static void publishState() {
 }
 
 // Foto von der Kamera holen und direkt (stückweise) per MQTT weiterreichen.
-// Retained, damit die App beim Öffnen das letzte Foto sofort anzeigt.
-static void sendSnapshot() {
-  snapRequested = false;
-  String topic = kBase + "/snap";
+// Foto: retained auf <base>/snap, damit die App beim Öffnen das letzte Foto zeigt.
+// Live: kleine Einzelbilder auf <base>/live (nicht gespeichert).
+static bool sendSnapshot(bool live) {
+  if (!live) snapRequested = false;
+  String topic = kBase + (live ? "/live" : "/snap");
   String err;
   bool started = false;
   bool ok = Camera::snapshot(
-      [&](size_t total) { return started = mqtt.beginPublish(topic.c_str(), total, true); },
+      live ? CAM_LIVE_WIDTH : CAM_WIDTH, live ? CAM_LIVE_HEIGHT : CAM_HEIGHT,
+      [&](size_t total) { return started = mqtt.beginPublish(topic.c_str(), total, !live); },
       [&](const uint8_t* d, size_t n) { return mqtt.write(d, n) == n; }, err);
   if (started) {
     if (ok) {
@@ -343,14 +361,18 @@ static void sendSnapshot() {
     }
   }
   if (ok) {
-    time_t ts = time(nullptr);
-    snapTs = ts > 1700000000 ? (uint32_t)ts : 1;
-    publishNow = true;
-    Serial.println(F("[CAM] Foto gesendet"));
+    if (!live) {
+      time_t ts = time(nullptr);
+      snapTs = ts > 1700000000 ? (uint32_t)ts : 1;
+      publishNow = true;
+      Serial.println(F("[CAM] Foto gesendet"));
+    }
   } else {
     Serial.printf("[CAM] Fehler: %s\n", err.c_str());
+    if (live) liveUntilMs = 0;  // bei Fehler Live beenden statt Fehler im Sekundentakt
     if (mqtt.connected()) mqtt.publish((kBase + "/ack").c_str(), ("err: Foto - " + err).c_str());
   }
+  return ok;
 }
 
 static void mqttLoop() {
@@ -376,7 +398,17 @@ static void mqttLoop() {
     }
   }
   mqtt.loop();
-  if (snapRequested) sendSnapshot();
+  if (snapRequested) sendSnapshot(false);
+  if (liveUntilMs) {
+    uint32_t t = millis();
+    if ((int32_t)(t - liveUntilMs) >= 0) {
+      liveUntilMs = 0;
+      Serial.println(F("[CAM] Live beendet"));
+    } else if (t - liveLastFrameMs >= CAM_LIVE_INTERVAL_MS && mqtt.connected()) {
+      sendSnapshot(true);
+      liveLastFrameMs = millis();
+    }
+  }
 
   static bool pendingChange = false;
   uint32_t now = millis();
@@ -430,7 +462,9 @@ static void setupWeb() {
     String err;
     bool started = false;
     WiFiClient client = web.client();
+    bool small = web.hasArg("live");
     bool ok = Camera::snapshot(
+        small ? CAM_LIVE_WIDTH : CAM_WIDTH, small ? CAM_LIVE_HEIGHT : CAM_HEIGHT,
         [&](size_t total) {
           web.setContentLength(total);
           web.sendHeader("Cache-Control", "no-store");
@@ -599,7 +633,7 @@ void setup() {
 
   setupWeb();
   Serial.println(F("Befehle im seriellen Monitor: on [min] | off | level N | temp N | "
-                   "thermo N|off | light on|off | snap | estop | reset"));
+                   "thermo N|off | light on|off | snap | live [s]|off | estop | reset"));
 }
 
 void loop() {

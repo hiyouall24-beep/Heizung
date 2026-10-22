@@ -188,8 +188,19 @@ etwa 30–60 KB. Das letzte Foto bleibt auf dem Broker gespeichert und wird beim
 sofort angezeigt. Hängt die Kamera an einem Reolink-NVR/Home Hub, trägst du dessen IP ein
 und wählst die Kamera mit `CAM_CHANNEL`.
 
-**Live-Video** geht weiterhin über die normale Reolink-App. Für einen Videostream ist der ESP32
-zu schwach, außerdem würde das viel Datenvolumen verbrauchen.
+**Live-Ansicht:** Mit **▶ Live** schickt der ESP32 laufend kleine Bilder (480 × 270, etwa
+1 Bild pro Sekunde), solange die Kamera in der App offen ist. Das ist kein echtes Video
+(kein Ton, kein flüssiges Bild), reicht aber, um zu sehen, was in der Werkstatt los ist.
+
+- Datenverbrauch: ca. **1–1,5 MB pro Minute** (einmal hoch zum Broker, einmal runter aufs Handy)
+- Live stoppt automatisch, wenn du die App verlässt, auf **■ Stopp** tippst oder nach 5 Minuten
+- Meldet sich die App nicht mehr (z. B. Funkloch), hört der ESP32 nach spätestens 60 s auf
+- Bildgröße und Bildrate: `CAM_LIVE_WIDTH`, `CAM_LIVE_HEIGHT`, `CAM_LIVE_INTERVAL_MS` in `config.h`
+- Der kostenlose HiveMQ-Tarif hat ein monatliches Datenlimit. Für gelegentliches Reinschauen
+  reicht es, für stundenlanges Live-Schauen nicht.
+
+**Flüssiges Video mit Ton** gibt es weiterhin in der normalen Reolink-App. Das geht über
+Reolinks eigene Cloud und lässt sich nicht in eine selbst gebaute Web-App einbetten.
 
 **Funktioniert nicht mit:** reinen Akku-Kameras (Argus-Serie) und 4G-Kameras (Go-Serie).
 Diese haben kein HTTP-Interface im lokalen Netz.
@@ -215,6 +226,7 @@ Topics (Basis einstellbar mit `MQTT_BASE_TOPIC`, Standard `heizung/werkstatt`):
 | `heizung/werkstatt/cmd` | → ESP | Befehl als Text |
 | `heizung/werkstatt/ack` | ESP → | Antwort auf den Befehl (`ok: …` / `err: …`) |
 | `heizung/werkstatt/snap` | ESP → | letztes Kamerafoto als JPEG (retained) |
+| `heizung/werkstatt/live` | ESP → | Live-Einzelbilder als JPEG (nicht gespeichert) |
 
 Befehle (gleich für MQTT, Weboberfläche und seriellen Monitor):
 
@@ -230,6 +242,7 @@ Befehle (gleich für MQTT, Weboberfläche und seriellen Monitor):
 | `estop` | **Not-Aus**: Heizung sofort stromlos |
 | `reset` | Not-Aus zurücksetzen (Heizung bekommt wieder Strom, bleibt aber aus) |
 | `snap` | Foto von der Kamera aufnehmen und senden |
+| `live [sek]` / `live off` | Live-Bilder für X Sekunden (max. 120, die App verlängert automatisch) |
 | `status` | Status sofort senden |
 
 Status-JSON (kurze Schlüssel, um Daten zu sparen):

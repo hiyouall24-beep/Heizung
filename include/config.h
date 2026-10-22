@@ -75,5 +75,10 @@
 #define CAM_WIDTH     640      // Fotogröße fürs Handy (spart Daten: ~30-60 KB)
 #define CAM_HEIGHT    360      // 0 bei CAM_WIDTH = volle Auflösung (nicht empfohlen)
 #define CAM_MAX_BYTES 250000   // größere Bilder werden nicht übertragen
+// Live-Ansicht: laufende Einzelbilder, solange die App die Kamera anzeigt
+#define CAM_LIVE_WIDTH       480   // kleiner = flüssiger und weniger Daten (~15-25 KB/Bild)
+#define CAM_LIVE_HEIGHT      270
+#define CAM_LIVE_INTERVAL_MS 700   // Pause zwischen zwei Bildern (ca. 1 Bild/s)
+#define CAM_LIVE_MAX_S       120   // Live stoppt automatisch, wenn die App sich nicht meldet
 
 #define HOSTNAME "heizung"            // lokal erreichbar unter http://heizung.local

@@ -33,7 +33,7 @@ static String urlEncode(const char* s) {
 
 bool enabled() { return strlen(CAM_HOST) > 0; }
 
-bool snapshot(const std::function<bool(size_t)>& onStart,
+bool snapshot(uint16_t width, uint16_t height, const std::function<bool(size_t)>& onStart,
               const std::function<bool(const uint8_t*, size_t)>& onChunk, String& err) {
   if (!enabled()) {
     err = "keine Kamera eingerichtet";
@@ -47,7 +47,7 @@ bool snapshot(const std::function<bool(size_t)>& onStart,
   String url = String("http://") + CAM_HOST + "/cgi-bin/api.cgi?cmd=Snap&channel=" +
                CAM_CHANNEL + "&rs=" + String(millis()) + "&user=" + urlEncode(CAM_USER) +
                "&password=" + urlEncode(CAM_PASS);
-  if (CAM_WIDTH > 0) url += "&width=" + String(CAM_WIDTH) + "&height=" + String(CAM_HEIGHT);
+  if (width > 0) url += "&width=" + String(width) + "&height=" + String(height);
 
   WiFiClient client;
   HTTPClient http;

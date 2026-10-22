@@ -11,7 +11,9 @@ bool enabled();
 
 // onStart(gesamtlänge) wird einmal aufgerufen, danach onChunk() für jedes Datenstück.
 // Liefert false und eine Fehlermeldung in err, wenn etwas schiefgeht.
-bool snapshot(const std::function<bool(size_t total)>& onStart,
+// width/height = gewünschte Bildgröße (0 = volle Auflösung der Kamera).
+bool snapshot(uint16_t width, uint16_t height,
+              const std::function<bool(size_t total)>& onStart,
               const std::function<bool(const uint8_t* data, size_t len)>& onChunk,
               String& err);
 
