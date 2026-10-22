@@ -3,7 +3,7 @@
 //  - VEVOR Diesel-Luftheizung über Bluetooth LE
 //  - 2x DS18B20 Temperatursensoren
 //  - 12-V-Licht über MOSFET
-//  - Foto von einer Reolink-Kamera auf Knopfdruck
+//  - bis zu 2 Reolink-Kameras: Foto, Live-Ansicht, Timelapse auf microSD
 //  - Not-Aus (Relais trennt die Heizung vom Strom)
 //  - Fernsteuerung + Anzeige über MQTT (sehr wenig Datenverbrauch)
 //  - lokale Weboberfläche http://heizung.local
@@ -29,6 +29,7 @@
 #include "HeaterBle.h"
 #include "Sensors.h"
 #include "Camera.h"
+#include "Timelapse.h"
 
 static HeaterBle heater;
 static Sensors sensors;
@@ -57,10 +58,32 @@ static uint32_t lastThermoMs = 0;
 
 static bool publishNow = true;       // nächsten Status sofort senden
 static uint32_t lastCommandMs = 0;
-static bool snapRequested = false;    // Foto per MQTT senden
-static uint32_t snapTs = 0;           // Zeitpunkt des letzten Fotos
+static uint8_t snapRequested = 0;     // Bitmaske: Foto dieser Kameras per MQTT senden
+static uint32_t snapTs[Camera::MAX_CAMS] = {};  // Zeitpunkt des letzten Fotos
 static uint32_t liveUntilMs = 0;      // Live-Ansicht aktiv bis (0 = aus)
 static uint32_t liveLastFrameMs = 0;
+static uint8_t liveCam = 0;
+static uint8_t tlPlayCam = 0;         // Timelapse wird gerade per MQTT abgespielt
+static uint32_t tlPlayLastMs = 0;
+static uint16_t tlPlaySent = 0;
+
+// n-tes Wort (ab 0) aus einem Text
+static String word(const String& s, int n) {
+  int start = 0;
+  for (int i = 0; i < n; i++) {
+    start = s.indexOf(' ', start);
+    if (start < 0) return "";
+    while (s[start] == ' ') start++;
+  }
+  int end = s.indexOf(' ', start);
+  return end < 0 ? s.substring(start) : s.substring(start, end);
+}
+
+// Kameranummer aus dem Befehl (1-basiert, leer = 1) -> Index, -1 = ungültig
+static int camArg(const String& s) {
+  int n = s.length() ? s.toInt() : 1;
+  return (n >= 1 && n <= Camera::count()) ? n - 1 : -1;
+}
 static uint32_t lastPublishMs = 0;
 static uint32_t mqttRetryMs = 0;
 static uint32_t mqttRetryDelay = 5000;
@@ -141,7 +164,9 @@ static String resetEstop() {
 // -------------------------------------------------------------- Befehle -----
 // Gemeinsame Befehle für MQTT, Weboberfläche und seriellen Monitor:
 //   on [minuten] | off | level 1-10 | temp 8-36 | thermo <°C>|off
-//   runtime <minuten> | light on|off|toggle | snap | live [sek]|off | estop | reset | status
+//   runtime <minuten> | light on|off|toggle | snap [kamera] | live <sek>|off [kamera]
+//   tl <minuten> [heizung] | tl off | tldays [kamera] | tlplay <kamera> <JJJJMMTT> [n] | tlstop
+//   estop | reset | status
 static String handleCommand(String line) {
   line.trim();
   line.toLowerCase();
@@ -158,13 +183,18 @@ static String handleCommand(String line) {
   }
   if (c == "reset") return resetEstop();
   if (c == "status") return "ok";
+  if ((c == "live" || c == "snap" || c == "foto" || c.startsWith("tl")) && !Camera::count())
+    return "err: keine Kamera eingerichtet (CAM_HOST in secrets.h)";
   if (c == "live") {
-    if (!Camera::enabled()) return "err: keine Kamera eingerichtet (CAM_HOST in secrets.h)";
-    if (a == "off" || a == "aus" || a == "0") {
+    String w0 = word(a, 0);
+    if (w0 == "off" || w0 == "aus" || w0 == "0") {
       liveUntilMs = 0;
       return "ok: live aus";
     }
-    int s = a.length() ? a.toInt() : 60;
+    int cam = camArg(word(a, 1));
+    if (cam < 0) return "err: Kamera gibt es nicht";
+    liveCam = cam;
+    int s = w0.length() ? w0.toInt() : 60;
     s = constrain(s, 5, CAM_LIVE_MAX_S);
     liveUntilMs = millis() + s * 1000UL;
     if (!liveUntilMs) liveUntilMs = 1;
@@ -173,9 +203,55 @@ static String handleCommand(String line) {
     return "ok: live " + String(s) + " s";
   }
   if (c == "snap" || c == "foto") {
-    if (!Camera::enabled()) return "err: keine Kamera eingerichtet (CAM_HOST in secrets.h)";
-    snapRequested = true;
+    int cam = camArg(a);
+    if (cam < 0) return "err: Kamera gibt es nicht";
+    snapRequested |= 1 << cam;
     return "ok: Foto wird aufgenommen ...";
+  }
+  // Timelapse: "tl off" | "tl <minuten> [heizung]"
+  if (c == "tl") {
+    if (!Timelapse::sdOk()) return "err: keine microSD-Karte";
+    String w0 = word(a, 0);
+    if (w0 == "off" || w0 == "aus" || w0 == "0") {
+      Timelapse::configure(0, false);
+      return "ok: Timelapse aus";
+    }
+    int m = w0.toInt();
+    if (m < 1 || m > 120) return "err: tl 1-120 [heizung] oder tl off";
+    bool onlyHeat = word(a, 1).startsWith("heiz");
+    Timelapse::configure(m, onlyHeat);
+    return "ok: Timelapse alle " + String(m) + " min" + (onlyHeat ? " (nur bei Heizbetrieb)" : "");
+  }
+  // "tldays [kamera]" -> Liste der Tage auf <base>/tl/days
+  if (c == "tldays") {
+    int cam = camArg(a);
+    if (cam < 0) return "err: Kamera gibt es nicht";
+    JsonDocument d;
+    d["c"] = cam + 1;
+    Timelapse::listDays(cam, d["d"].to<JsonArray>());
+    String out;
+    serializeJson(d, out);
+    mqtt.publish((kBase + "/tl/days").c_str(), out.c_str());
+    publishNow = false;
+    return "ok: tldays";
+  }
+  // "tlplay <kamera> <JJJJMMTT> [jedes n-te Bild]" -> Bilder auf <base>/tl/frame
+  if (c == "tlplay") {
+    int cam = camArg(word(a, 0));
+    if (cam < 0) return "err: Kamera gibt es nicht";
+    uint16_t total;
+    String err;
+    if (!Timelapse::playStart(cam, word(a, 1), constrain(word(a, 2).toInt(), 1, 50), total, err))
+      return "err: " + err;
+    tlPlayCam = cam;
+    tlPlaySent = 0;
+    publishNow = false;
+    return "ok: tl start " + String(total);
+  }
+  if (c == "tlstop") {
+    Timelapse::playStop();
+    publishNow = false;
+    return "ok: tl stop";
   }
 
   if (c == "light" || c == "licht") {
@@ -272,8 +348,20 @@ static void buildState(JsonDocument& d) {
     else t.add(round1(v));
     n.add(kSensorNames[i]);
   }
-  if (Camera::enabled()) d["cam"] = 1;
-  if (snapTs) d["sn"] = snapTs;
+  if (Camera::count()) {
+    d["cam"] = Camera::count();
+    JsonArray cn = d["cn"].to<JsonArray>();
+    JsonArray sn = d["sn"].to<JsonArray>();
+    for (uint8_t i = 0; i < Camera::count(); i++) {
+      cn.add(Camera::name(i));
+      sn.add(snapTs[i]);
+    }
+    if (Timelapse::sdOk()) {
+      d["sd"] = Timelapse::freeMB();
+      d["tl"] = Timelapse::intervalMin();
+      if (Timelapse::onlyHeating()) d["tlh"] = 1;
+    }
+  }
   d["li"] = lightOn ? 1 : 0;
   d["es"] = estop ? 1 : 0;
   if (alarmMsg.length()) d["al"] = alarmMsg;
@@ -341,15 +429,15 @@ static void publishState() {
 }
 
 // Foto von der Kamera holen und direkt (stückweise) per MQTT weiterreichen.
-// Foto: retained auf <base>/snap, damit die App beim Öffnen das letzte Foto zeigt.
+// Foto: retained auf <base>/snap/<kamera>, damit die App beim Öffnen das letzte Foto zeigt.
 // Live: kleine Einzelbilder auf <base>/live (nicht gespeichert).
-static bool sendSnapshot(bool live) {
-  if (!live) snapRequested = false;
-  String topic = kBase + (live ? "/live" : "/snap");
+static bool sendSnapshot(uint8_t cam, bool live) {
+  if (!live) snapRequested &= ~(1 << cam);
+  String topic = kBase + (live ? String("/live") : "/snap/" + String(cam + 1));
   String err;
   bool started = false;
   bool ok = Camera::snapshot(
-      live ? CAM_LIVE_WIDTH : CAM_WIDTH, live ? CAM_LIVE_HEIGHT : CAM_HEIGHT,
+      cam, live ? CAM_LIVE_WIDTH : CAM_WIDTH, live ? CAM_LIVE_HEIGHT : CAM_HEIGHT,
       [&](size_t total) { return started = mqtt.beginPublish(topic.c_str(), total, !live); },
       [&](const uint8_t* d, size_t n) { return mqtt.write(d, n) == n; }, err);
   if (started) {
@@ -363,7 +451,7 @@ static bool sendSnapshot(bool live) {
   if (ok) {
     if (!live) {
       time_t ts = time(nullptr);
-      snapTs = ts > 1700000000 ? (uint32_t)ts : 1;
+      snapTs[cam] = ts > 1700000000 ? (uint32_t)ts : 1;
       publishNow = true;
       Serial.println(F("[CAM] Foto gesendet"));
     }
@@ -373,6 +461,37 @@ static bool sendSnapshot(bool live) {
     if (mqtt.connected()) mqtt.publish((kBase + "/ack").c_str(), ("err: Foto - " + err).c_str());
   }
   return ok;
+}
+
+// Timelapse über MQTT abspielen: je Bild 6 Byte Uhrzeit (HHMMSS) + JPEG
+static void tlPlayLoop() {
+  if (!Timelapse::playing() || millis() - tlPlayLastMs < TL_PLAY_INTERVAL_MS) return;
+  tlPlayLastMs = millis();
+  File f;
+  String frame;
+  String ack = kBase + "/ack";
+  if (!Timelapse::playNext(f, frame)) {
+    mqtt.publish(ack.c_str(), ("ok: tl fertig " + String(tlPlaySent)).c_str());
+    return;
+  }
+  size_t size = f.size();
+  bool ok = size > 0 && size <= CAM_MAX_BYTES &&
+            mqtt.beginPublish((kBase + "/tl/frame").c_str(), size + 6, false);
+  if (ok) {
+    mqtt.write((const uint8_t*)frame.c_str(), 6);
+    uint8_t buf[1024];
+    size_t done = 0;
+    while (ok && done < size) {
+      int n = f.read(buf, sizeof(buf));
+      if (n <= 0 || mqtt.write(buf, n) != (size_t)n) ok = false;
+      else done += n;
+    }
+    if (ok) mqtt.endPublish();
+    else net.stop();  // halb gesendet -> Verbindung neu aufbauen
+  }
+  f.close();
+  if (ok) tlPlaySent++;
+  else Timelapse::playStop();
 }
 
 static void mqttLoop() {
@@ -398,14 +517,16 @@ static void mqttLoop() {
     }
   }
   mqtt.loop();
-  if (snapRequested) sendSnapshot(false);
+  for (uint8_t i = 0; i < Camera::MAX_CAMS; i++)
+    if (snapRequested & (1 << i) && mqtt.connected()) sendSnapshot(i, false);
+  if (mqtt.connected()) tlPlayLoop();
   if (liveUntilMs) {
     uint32_t t = millis();
     if ((int32_t)(t - liveUntilMs) >= 0) {
       liveUntilMs = 0;
       Serial.println(F("[CAM] Live beendet"));
     } else if (t - liveLastFrameMs >= CAM_LIVE_INTERVAL_MS && mqtt.connected()) {
-      sendSnapshot(true);
+      sendSnapshot(liveCam, true);
       liveLastFrameMs = millis();
     }
   }
@@ -463,8 +584,10 @@ static void setupWeb() {
     bool started = false;
     WiFiClient client = web.client();
     bool small = web.hasArg("live");
+    int cam = camArg(web.arg("c"));
+    if (cam < 0) return web.send(404, "text/plain; charset=utf-8", "keine Kamera");
     bool ok = Camera::snapshot(
-        small ? CAM_LIVE_WIDTH : CAM_WIDTH, small ? CAM_LIVE_HEIGHT : CAM_HEIGHT,
+        cam, small ? CAM_LIVE_WIDTH : CAM_WIDTH, small ? CAM_LIVE_HEIGHT : CAM_HEIGHT,
         [&](size_t total) {
           web.setContentLength(total);
           web.sendHeader("Cache-Control", "no-store");
@@ -473,6 +596,33 @@ static void setupWeb() {
         },
         [&](const uint8_t* d, size_t n) { return client.write(d, n) == n; }, err);
     if (!ok && !started) web.send(502, "text/plain; charset=utf-8", err);
+  });
+  web.on("/api/tl/days", HTTP_GET, [] {
+    if (!webAuth()) return;
+    int cam = camArg(web.arg("c"));
+    JsonDocument d;
+    if (cam >= 0) Timelapse::listDays(cam, d["d"].to<JsonArray>());
+    String out;
+    serializeJson(d, out);
+    web.send(200, "application/json", out);
+  });
+  web.on("/api/tl/list", HTTP_GET, [] {
+    if (!webAuth()) return;
+    int cam = camArg(web.arg("c"));
+    JsonDocument d;
+    if (cam >= 0) Timelapse::listFrames(cam, web.arg("d"), d["f"].to<JsonArray>());
+    String out;
+    serializeJson(d, out);
+    web.send(200, "application/json", out);
+  });
+  web.on("/api/tl/img", HTTP_GET, [] {
+    if (!webAuth()) return;
+    int cam = camArg(web.arg("c"));
+    File f = cam >= 0 ? Timelapse::openFrame(cam, web.arg("d"), web.arg("f")) : File();
+    if (!f) return web.send(404, "text/plain", "404");
+    web.sendHeader("Cache-Control", "max-age=86400");
+    web.streamFile(f, "image/jpeg");
+    f.close();
   });
   web.onNotFound([] { web.send(404, "text/plain", "404"); });
   web.begin();
@@ -615,6 +765,7 @@ void setup() {
   }
 
   sensors.begin();
+  Timelapse::begin();
   heater.begin();
   heater.setEnabled(!estop);
 
@@ -641,7 +792,8 @@ void loop() {
   bool wifiUp = WiFi.status() == WL_CONNECTED;
   if (wifiUp && !wifiWasUp) {
     Serial.printf("[WLAN] verbunden, IP %s\n", WiFi.localIP().toString().c_str());
-    configTime(0, 0, "pool.ntp.org");  // nur Zeitstempel, ~100 Byte pro Stunde
+    // Uhrzeit per NTP (deutsche Zeit inkl. Sommerzeit), ~100 Byte pro Stunde
+    configTzTime("CET-1CEST,M3.5.0,M10.5.0/3", "pool.ntp.org");
     MDNS.begin(HOSTNAME);
     MDNS.addService("http", "tcp", 80);
   }
@@ -651,6 +803,7 @@ void loop() {
   heater.loop();
   safetyLoop();
   thermoLoop();
+  Timelapse::loop(heater.isHeating());
   mqttLoop();
   web.handleClient();
   serialLoop();

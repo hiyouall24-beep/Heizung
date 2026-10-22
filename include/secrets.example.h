@@ -22,6 +22,10 @@
 #define CAM_HOST    ""          // z. B. "192.168.178.50"
 #define CAM_USER    "admin"
 #define CAM_PASS    ""
+// Optional: zweite Reolink-Kamera (z. B. am Roboter)
+#define CAM2_HOST   ""
+#define CAM2_USER   "admin"
+#define CAM2_PASS   ""
 
 // Login für die lokale Weboberfläche http://heizung.local
 #define WEB_USER    "admin"

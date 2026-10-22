@@ -120,7 +120,10 @@ dialog input{width:100%}
   </section>
 
   <section class="card hide" id="camCard">
-    <h2>Kamera</h2>
+    <div class="row" style="justify-content:space-between;margin-bottom:10px">
+      <h2 style="margin:0">Kamera</h2>
+      <div class="seg hide" id="camSeg" style="flex:1;max-width:260px"></div>
+    </div>
     <div style="position:relative">
       <img id="camImg" alt="Kamerabild" style="width:100%;aspect-ratio:16/9;object-fit:cover;border-radius:10px;background:var(--btn);display:block">
       <span id="liveTag" class="hide" style="position:absolute;top:8px;left:8px;background:var(--bad);color:#fff;font-size:12px;font-weight:700;padding:3px 8px;border-radius:6px">● LIVE</span>
@@ -129,6 +132,43 @@ dialog input{width:100%}
     <div class="row" style="margin-top:8px">
       <button id="btnLive" class="pri flex1">▶ Live</button>
       <button id="btnSnap" class="flex1">Foto aufnehmen</button>
+    </div>
+  </section>
+
+  <section class="card hide" id="tlCard">
+    <h2>Timelapse <span id="tlCam" style="text-transform:none;letter-spacing:0"></span></h2>
+    <div class="row">
+      <select id="tlInt" class="flex1" aria-label="Aufnahme-Intervall">
+        <option value="0">Aufnahme aus</option><option value="1">jede Minute</option>
+        <option value="2">alle 2 min</option><option value="5">alle 5 min</option>
+        <option value="10">alle 10 min</option><option value="15">alle 15 min</option>
+        <option value="30">alle 30 min</option><option value="60">jede Stunde</option>
+      </select>
+      <label class="row" style="gap:6px;font-size:14px"><input type="checkbox" id="tlHeat" style="min-height:0;width:20px;height:20px"> nur bei Heizbetrieb</label>
+    </div>
+    <div class="mut" id="tlInfo" style="margin-top:6px"></div>
+    <div class="row" style="margin-top:14px">
+      <select id="tlDay" class="flex1" aria-label="Tag"><option value="">Tag wählen …</option></select>
+      <select id="tlStep" aria-label="Bilder">
+        <option value="1">alle Bilder</option><option value="2">jedes 2.</option>
+        <option value="4">jedes 4.</option><option value="8">jedes 8.</option>
+      </select>
+    </div>
+    <div class="mut" id="tlEst" style="margin-top:6px"></div>
+    <button id="tlLoad" class="pri" style="width:100%;margin-top:8px" disabled>Zeitraffer laden</button>
+    <div id="tlPlayer" class="hide" style="margin-top:12px">
+      <div style="position:relative">
+        <img id="tlImg" alt="Zeitraffer" style="width:100%;aspect-ratio:16/9;object-fit:cover;border-radius:10px;background:var(--btn);display:block">
+        <span id="tlTime" style="position:absolute;right:8px;bottom:8px;background:rgba(0,0,0,.6);color:#fff;font-size:13px;font-weight:600;padding:3px 8px;border-radius:6px">–</span>
+      </div>
+      <input type="range" id="tlPos" min="0" max="0" value="0" style="margin-top:8px">
+      <div class="row">
+        <button id="tlPlay" class="flex1">▶ Abspielen</button>
+        <select id="tlSpeed" aria-label="Geschwindigkeit">
+          <option value="200">5 Bilder/s</option><option value="100" selected>10 Bilder/s</option><option value="50">20 Bilder/s</option>
+        </select>
+      </div>
+      <div class="mut" id="tlProg" style="margin-top:6px"></div>
     </div>
   </section>
 
@@ -202,8 +242,7 @@ function render(){
   $('lState').textContent = s.li ? 'An' : 'Aus';
   $('btnLight').textContent = s.li ? 'Ausschalten' : 'Einschalten';
 
-  $('camCard').classList.toggle('hide', !s.cam);
-  if (s.sn > 1 && !live) $('camTs').textContent = 'Foto: ' + new Date(s.sn*1000).toLocaleString('de-DE',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'});
+  renderCams(s);
 
   const c = $('conn');
   const age = s.ts ? Math.round(Date.now()/1000 - s.ts) : null;
@@ -232,10 +271,43 @@ function send(c){
 
 $('btnOn').onclick = () => send('on '+$('runtime').value);
 $('btnOff').onclick = () => send('off');
+// ---------- Kameras ----------
+let camSel = 1, camCount = 0;
+const snapUrl = {};          // letztes Foto je Kamera (Blob-URL)
+const dt = ts => new Date(ts*1000).toLocaleString('de-DE',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'});
+function renderCams(s){
+  $('camCard').classList.toggle('hide', !s.cam);
+  if ((s.cam||0) !== camCount) {
+    camCount = s.cam||0;
+    const seg = $('camSeg'); seg.innerHTML = '';
+    seg.classList.toggle('hide', camCount < 2);
+    (s.cn||[]).forEach((n,i) => { const b = document.createElement('button'); b.textContent = n; b.dataset.c = i+1; b.onclick = () => selectCam(i+1); seg.appendChild(b); });
+    if (camSel > camCount) camSel = 1;
+    if (camCount) loadDays();
+  }
+  document.querySelectorAll('#camSeg button').forEach(b => b.classList.toggle('act', +b.dataset.c === camSel));
+  const sn = (s.sn||[])[camSel-1];
+  if (!live) $('camTs').textContent = sn > 1 ? 'Foto: ' + dt(sn) : (snapUrl[camSel] ? 'Foto' : 'noch kein Foto');
+  renderTl(s);
+}
+function selectCam(n){
+  if (n === camSel) return;
+  setLive(false); camSel = n;
+  const img = $('camImg'); if (snapUrl[n]) img.src = snapUrl[n]; else img.removeAttribute('src');
+  tlReset(); loadDays(); render();
+}
+function storeSnap(cam, blob){
+  if (snapUrl[cam]) URL.revokeObjectURL(snapUrl[cam]);
+  snapUrl[cam] = URL.createObjectURL(blob);
+  if (cam === camSel && !live) { $('camImg').src = snapUrl[cam]; }
+  if (cam === camSel) snapDone();
+}
+
 function snapDone(){ clearTimeout(snapDone.t); $('btnSnap').disabled=false; $('btnSnap').textContent='Foto aufnehmen'; }
-function showSnap(blob){
-  const img = $('camImg'); if (img._url) URL.revokeObjectURL(img._url);
-  img._url = URL.createObjectURL(blob); img.src = img._url; snapDone();
+let liveUrl = null;
+function showLiveBlob(blob){
+  if (liveUrl) URL.revokeObjectURL(liveUrl);
+  liveUrl = URL.createObjectURL(blob); $('camImg').src = liveUrl;
 }
 // ---------- Live-Ansicht (ca. 1 Bild pro Sekunde) ----------
 let live = false, liveKeep = null, liveStop = null;
@@ -249,11 +321,15 @@ function setLive(on){
   if (on) {
     liveStop = setTimeout(() => { setLive(false); toast('Live nach 5 min beendet'); }, LIVE_MAX_MS);
     if (transport.liveLocal) transport.liveLocal();
-    else { send('live 60'); liveKeep = setInterval(() => send('live 60'), 40000); }
-  } else if (!transport.liveLocal) send('live off');
+    else { send('live 60 '+camSel); liveKeep = setInterval(() => send('live 60 '+camSel), 40000); }
+  } else {
+    if (!transport.liveLocal) send('live off');
+    if (snapUrl[camSel]) $('camImg').src = snapUrl[camSel];
+    render();
+  }
 }
 function showFrame(blob){
-  showSnap(blob);
+  showLiveBlob(blob);
   $('camTs').textContent = 'Live · ' + new Date().toLocaleTimeString('de-DE');
 }
 $('btnLive').onclick = () => { if (transport) setLive(!live); };
@@ -263,8 +339,89 @@ window.addEventListener('pagehide', () => setLive(false));
 $('btnSnap').onclick = () => {
   $('btnSnap').disabled = true; $('btnSnap').textContent = 'lädt …';
   snapDone.t = setTimeout(snapDone, 20000);
-  if (transport && transport.snap) transport.snap(); else send('snap');
+  if (transport && transport.snap) transport.snap(); else send('snap '+camSel);
 };
+// ---------- Timelapse ----------
+let tlFrames = [], tlIdx = 0, tlTimer = null, tlLoading = false, tlExpect = 0, tlDays = [], tlEditUntil = 0;
+const fmtDay = d => d.slice(6,8)+'.'+d.slice(4,6)+'.'+d.slice(0,4);
+const fmtT = t => t.slice(0,2)+':'+t.slice(2,4);
+function renderTl(s){
+  $('tlCard').classList.toggle('hide', s.sd==null || !s.cam);
+  if (s.sd==null) return;
+  $('tlCam').textContent = camCount > 1 ? '· ' + ((s.cn||[])[camSel-1]||'') : '';
+  if (Date.now() > tlEditUntil) { $('tlInt').value = String(s.tl||0); $('tlHeat').checked = !!s.tlh; }
+  const free = s.sd >= 1024 ? (s.sd/1024).toFixed(1).replace('.',',')+' GB' : s.sd+' MB';
+  $('tlInfo').textContent = (s.tl ? 'Nimmt alle '+s.tl+' min ein Bild auf'+(s.tlh?', nur bei Heizbetrieb':'') : 'Aufnahme ist aus') + ' · '+free+' frei';
+}
+function tlSetting(){
+  tlEditUntil = Date.now() + 10000;
+  const v = $('tlInt').value;
+  send(v==='0' ? 'tl off' : 'tl '+v+($('tlHeat').checked?' heizung':''));
+}
+$('tlInt').onchange = tlSetting; $('tlHeat').onchange = tlSetting;
+function fillDays(days){
+  tlDays = days || [];
+  const sel = $('tlDay'), cur = sel.value;
+  sel.innerHTML = '<option value="">'+(tlDays.length?'Tag wählen …':'noch keine Aufnahmen')+'</option>';
+  tlDays.forEach(d => { const o = document.createElement('option'); o.value = d.d; o.textContent = fmtDay(d.d)+' · '+d.n+' Bilder'; sel.appendChild(o); });
+  if (tlDays.some(d => d.d===cur)) sel.value = cur;
+  tlEstimate();
+}
+function loadDays(){ if (transport && S.sd!=null) transport.tlDays ? transport.tlDays() : send('tldays '+camSel); }
+function tlEstimate(){
+  const d = tlDays.find(x => x.d===$('tlDay').value);
+  $('tlLoad').disabled = !d && !tlLoading;
+  if (!d) { $('tlEst').textContent=''; return; }
+  const n = Math.ceil(d.n / +$('tlStep').value);
+  $('tlEst').textContent = n+' Bilder' + (transport && transport.tlList ? ' · im WLAN' : ' · ca. '+Math.max(1,Math.round(n*45/1024))+' MB über Internet');
+}
+$('tlDay').onchange = tlEstimate; $('tlStep').onchange = tlEstimate;
+$('tlDay').onfocus = () => { if (!tlDays.length) loadDays(); };
+function tlReset(){
+  tlPause(); tlFrames.forEach(f => f.blob && URL.revokeObjectURL(f.src));
+  tlFrames = []; tlIdx = 0; tlLoading = false; $('tlPlayer').classList.add('hide');
+  $('tlLoad').textContent = 'Zeitraffer laden'; tlEstimate();
+}
+function tlShow(i){
+  if (!tlFrames.length) return;
+  tlIdx = Math.max(0, Math.min(i, tlFrames.length-1));
+  const f = tlFrames[tlIdx];
+  $('tlImg').src = f.src; $('tlTime').textContent = fmtT(f.t);
+  $('tlPos').max = tlFrames.length-1; $('tlPos').value = tlIdx;
+}
+function tlAdd(t, src, blob){
+  tlFrames.push({t, src, blob});
+  $('tlPlayer').classList.remove('hide');
+  if (!tlTimer) tlShow(tlFrames.length-1); else $('tlPos').max = tlFrames.length-1;
+  $('tlProg').textContent = tlLoading ? 'lädt '+tlFrames.length+(tlExpect?' / '+tlExpect:'')+' …' : tlFrames.length+' Bilder';
+}
+function tlPause(){ clearInterval(tlTimer); tlTimer = null; $('tlPlay').textContent = '▶ Abspielen'; }
+$('tlPlay').onclick = () => {
+  if (tlTimer) return tlPause();
+  if (tlIdx >= tlFrames.length-1) tlShow(0);
+  $('tlPlay').textContent = '❚❚ Pause';
+  tlTimer = setInterval(() => { if (tlIdx >= tlFrames.length-1) { if (!tlLoading) tlPause(); return; } tlShow(tlIdx+1); }, +$('tlSpeed').value);
+};
+$('tlSpeed').onchange = () => { if (tlTimer) { tlPause(); $('tlPlay').click(); } };
+$('tlPos').oninput = e => { tlPause(); tlShow(+e.target.value); };
+function tlFinished(){
+  tlLoading = false; $('tlLoad').textContent = 'Zeitraffer laden';
+  $('tlProg').textContent = tlFrames.length+' Bilder'; tlEstimate();
+}
+$('tlLoad').onclick = async () => {
+  if (tlLoading) { send('tlstop'); return tlFinished(); }
+  const day = $('tlDay').value, step = +$('tlStep').value; if (!day) return;
+  tlReset(); tlLoading = true; $('tlLoad').textContent = 'Laden abbrechen'; $('tlLoad').disabled = false;
+  if (transport.tlList) {
+    const frames = (await transport.tlList(day)).filter((_,i) => i % step === 0);
+    tlExpect = frames.length;
+    frames.forEach(f => tlAdd(f, 'api/tl/img?c='+camSel+'&d='+day+'&f='+f));
+    tlShow(0); tlFinished();
+  } else {
+    tlExpect = 0; send('tlplay '+camSel+' '+day+' '+step);
+  }
+};
+
 $('btnLight').onclick = () => send(S.li ? 'light off' : 'light on');
 $('btnEstop').onclick = () => { if (confirm('NOT-AUS auslösen? Die Heizung wird sofort stromlos.')) send('estop'); };
 $('btnReset').onclick = () => { if (confirm('Not-Aus zurücksetzen? Die Heizung bekommt wieder Strom (bleibt aus).')) send('reset'); };
@@ -292,17 +449,23 @@ function localTransport(){
   $('cfgBtn').classList.add('hide');
   return { liveLocal: async () => {
     while (live) {
-      try { const r = await fetch('api/snap?live=1&t='+Date.now(),{cache:'no-store'});
+      try { const r = await fetch('api/snap?live=1&c='+camSel+'&t='+Date.now(),{cache:'no-store'});
         if (!r.ok) throw new Error(await r.text());
         if (live) showFrame(await r.blob());
       } catch(e){ toast('Live: '+e.message); setLive(false); }
       await new Promise(r => setTimeout(r, 300));
     }
   }, snap: async () => {
-    try { const r = await fetch('api/snap?'+Date.now(),{cache:'no-store'});
+    const cam = camSel;
+    try { const r = await fetch('api/snap?c='+cam+'&t='+Date.now(),{cache:'no-store'});
       if (!r.ok) throw new Error(await r.text());
-      showSnap(await r.blob()); $('camTs').textContent = 'Foto: '+new Date().toLocaleTimeString('de-DE');
+      storeSnap(cam, await r.blob()); $('camTs').textContent = 'Foto: '+new Date().toLocaleTimeString('de-DE');
     } catch(e){ toast('Foto: '+e.message); snapDone(); }
+  }, tlDays: async () => {
+    try { const r = await fetch('api/tl/days?c='+camSel,{cache:'no-store'}); fillDays((await r.json()).d); } catch(e){}
+  }, tlList: async day => {
+    try { const r = await fetch('api/tl/list?c='+camSel+'&d='+day,{cache:'no-store'}); return (await r.json()).f || []; }
+    catch(e){ toast('Timelapse: '+e.message); return []; }
   }, send: async c => {
     const r = await fetch('api/cmd',{method:'POST',body:new URLSearchParams({c})});
     toast(await r.text()); poll();
@@ -336,13 +499,24 @@ function mqttTransport(){
     client.on('close', () => { $('conn').textContent='getrennt'; $('conn').className='badge off'; });
     client.on('error', e => toast('MQTT: '+e.message));
     client.on('message', (t, m) => {
-      if (t===c.base+'/snap') { if (m.length && !live) showSnap(new Blob([m],{type:'image/jpeg'})); return; }
+      if (t.startsWith(c.base+'/snap/')) { if (m.length) storeSnap(+t.split('/').pop(), new Blob([m],{type:'image/jpeg'})); return; }
+      if (t===c.base+'/tl/frame') {
+        if (tlLoading && m.length > 6) { const b = new Blob([m.subarray(6)],{type:'image/jpeg'}); tlAdd(new TextDecoder().decode(m.subarray(0,6)), URL.createObjectURL(b), true); }
+        return;
+      }
       if (t===c.base+'/live') { if (m.length && live) showFrame(new Blob([m],{type:'image/jpeg'})); return; }
       const msg = m.toString();
       if (t===c.base+'/ack' && msg.startsWith('err: Foto')) snapDone();
       if (t===c.base+'/state'){ try { S = JSON.parse(msg); lastRx = Date.now(); } catch(e){} }
       else if (t===c.base+'/online') online = msg==='1';
-      else if (t===c.base+'/ack') { if (msg.startsWith('err: Foto')) setLive(false); if (!msg.startsWith('ok: live')) toast(msg); }
+      else if (t===c.base+'/tl/days') { try { const j = JSON.parse(msg); if (j.c===camSel) fillDays(j.d); } catch(e){} return; }
+      else if (t===c.base+'/ack') {
+        if (msg.startsWith('err: Foto')) setLive(false);
+        if (msg.startsWith('ok: tl start ')) { tlExpect = +msg.split(' ').pop(); return; }
+        if (msg.startsWith('ok: tl fertig')) { tlFinished(); return; }
+        if (tlLoading && msg.startsWith('err:')) tlFinished();
+        if (!/^ok: (live|tldays|tl stop)/.test(msg)) toast(msg);
+      }
       render();
     });
   };

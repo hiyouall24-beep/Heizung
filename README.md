@@ -10,7 +10,8 @@ Firmware für einen ESP32, der eine VEVOR-Diesel-Luftheizung mit Bluetooth-App
 - **2 Temperatursensoren** (DS18B20), z. B. Werkstatt und außen
 - **ESP-Thermostat:** regelt die Heizstufe anhand deines eigenen Sensors in der Werkstatt
 - **12-V-Licht** schalten
-- **Reolink-Kamera:** Foto auf Knopfdruck in der App (nur ca. 30–60 KB pro Foto)
+- **Bis zu 2 Reolink-Kameras** (z. B. Werkstatt und Roboter): Foto, Live-Ansicht (ca. 1 Bild/s)
+- **Timelapse:** Bilder im festen Abstand auf microSD, in der App als Zeitraffer abspielen
 - **Not-Aus:** ein Relais trennt die Heizung sofort vom Strom (per App, Weboberfläche oder Taster).
   Der Not-Aus bleibt auch nach einem Neustart aktiv, bis er zurückgesetzt wird.
 - **Von zu Hause steuern** über MQTT, mit sehr wenig Datenverbrauch (ca. 3–5 MB im Monat)
@@ -45,7 +46,8 @@ Firmware für einen ESP32, der eine VEVOR-Diesel-Luftheizung mit Bluetooth-App
 | Licht | MOSFET-Modul, das mit 3,3 V schaltet (z. B. **AOD4184/D4184-Modul** oder IRLZ44N). **Nicht** das IRF520-Modul. |
 | Not-Aus | KFZ-Relais 12 V/30 A **Wechsler** (Klemmen 30/87/87a) + Relaismodul oder Transistor zum Ansteuern; optional Not-Aus-Pilztaster (Öffner) |
 | WLAN in der Werkstatt | WLAN mit Internet (Router, Repeater oder LTE-Router) |
-| Kamera (optional) | Reolink-Kamera mit WLAN/LAN im **gleichen Netz** wie der ESP32 (keine reinen Akku-/4G-Modelle, siehe unten) |
+| Kameras (optional) | 1–2 Reolink-Kameras mit WLAN/LAN im **gleichen Netz** wie der ESP32 (keine reinen Akku-/4G-Modelle, siehe unten) |
+| Timelapse (optional) | microSD-Kartenmodul (SPI) + microSD-Karte bis 32 GB, FAT32 formatiert |
 | Sicherungen | Flachsicherungen: Heizung 15 A, ESP32 2 A, Licht passend |
 
 ### Verdrahtung
@@ -62,6 +64,8 @@ ESP32 GPIO26 ──► MOSFET-Modul SIG
 ESP32 GPIO4  ──► DQ beider DS18B20  (+ 4,7 kΩ von GPIO4 nach 3,3 V)
              DS18B20: VDD → 3,3 V, GND → GND
 ESP32 GPIO33 ──► Not-Aus-Taster (Öffner) ──► GND   (nur wenn ESTOP_BUTTON_ENABLED true)
+microSD-Modul: CS → GPIO5, SCK → GPIO18, MISO → GPIO19, MOSI → GPIO23,
+               VCC → 5 V (Module mit Spannungsregler) bzw. 3,3 V, GND → GND
 Alle GND (Batterie, Step-Down, ESP32, MOSFET, Relais) verbinden.
 ```
 
@@ -162,7 +166,7 @@ Danach: App antippen → **Starten**. Eine Benachrichtigung (`ack`) bestätigt j
 
 ---
 
-## 4b. Reolink-Kamera
+## 4b. Reolink-Kameras
 
 Die App kann ein **aktuelles Foto** aus der Werkstatt anzeigen, z. B. um nach dem Start zu
 prüfen, ob alles in Ordnung ist. Der ESP32 holt das Bild im lokalen Netz von der Kamera
@@ -181,7 +185,10 @@ und schickt es nur auf Knopfdruck über MQTT. Am Router muss **nichts freigegebe
    #define CAM_USER "esp32"
    #define CAM_PASS "kamerapasswort"
    ```
-5. Neu flashen. In der App erscheint die Karte **Kamera** mit dem Knopf **Foto aufnehmen**.
+5. Optional eine **zweite Kamera** (z. B. am Roboter) mit `CAM2_HOST`, `CAM2_USER` und
+   `CAM2_PASS` eintragen. Die Namen in der App stellst du mit `CAM1_NAME`/`CAM2_NAME`
+   in `config.h` ein. In der App schaltest du oben in der Kamera-Karte zwischen beiden um.
+6. Neu flashen. In der App erscheint die Karte **Kamera** mit dem Knopf **Foto aufnehmen**.
 
 Das Foto wird in 640 × 360 angefordert (`CAM_WIDTH`/`CAM_HEIGHT` in `config.h`), das sind
 etwa 30–60 KB. Das letzte Foto bleibt auf dem Broker gespeichert und wird beim Öffnen der App
@@ -215,6 +222,38 @@ aktualisieren.
 
 ---
 
+## 4c. Timelapse (Zeitraffer)
+
+Mit einer microSD-Karte am ESP32 nimmt er in festen Abständen von jeder Kamera ein Bild
+auf (640 × 360, ca. 40 KB) und speichert es auf der Karte. Das kostet **kein Internet**.
+
+- **Einstellen in der App** (Karte „Timelapse“): Intervall von jeder Minute bis jede Stunde,
+  optional **„nur bei Heizbetrieb“**. Die Einstellung bleibt auch nach einem Neustart erhalten.
+- **Ansehen:** Tag wählen, „Zeitraffer laden“, dann abspielen (5–20 Bilder/s) oder mit dem
+  Schieberegler durchblättern. Die Uhrzeit steht unten rechts im Bild.
+- **Daten:** Im Werkstatt-WLAN (`http://heizung.local`) ist das Ansehen kostenlos. Über das
+  Internet kostet jedes Bild ca. 40–45 KB. Ein ganzer Tag alle 5 Minuten (288 Bilder) sind
+  ca. 12 MB. Mit „jedes 4. Bild“ wird es ein Viertel davon. Die App zeigt die Menge vor dem Laden an.
+- **Speicher:** Eine 32-GB-Karte reicht bei 2 Kameras und 5-Minuten-Intervall für mehrere
+  Jahre. Wird sie trotzdem voll, löscht der ESP32 automatisch die ältesten Tage.
+- Die Bilder liegen als normale JPEG-Dateien unter `/tl/<kamera>/<JJJJMMTT>/<HHMMSS>.jpg`
+  auf der Karte (Kamera 0 = erste). Du kannst die Karte also auch am PC auslesen und z. B. mit
+  einem Videoprogramm ein Zeitraffer-Video daraus machen.
+
+### Zur GoPro HERO4 Silver
+
+Die HERO4 hat keine offizielle Schnittstelle und kann nur ihr eigenes WLAN aufmachen. Der
+ESP32 müsste dafür das Werkstatt-WLAN verlassen. Eine Einbindung bräuchte einen zweiten ESP32
+und wäre unzuverlässig, weil sich die Kamera abschaltet und im Dauerbetrieb heiß wird.
+Für die App ist deshalb eine **zweite günstige Reolink-Kamera am Roboter** die bessere
+Lösung: Foto, Live und Timelapse funktionieren damit sofort.
+
+Die GoPro kannst du weiterhin direkt für hochwertige Zeitraffer nutzen: in den Modus
+„Zeitraffer“ (Time Lapse) stellen, per USB dauerhaft mit Strom versorgen und die Aufnahme
+von Hand starten.
+
+---
+
 ## 5. Befehle & MQTT-Topics
 
 Topics (Basis einstellbar mit `MQTT_BASE_TOPIC`, Standard `heizung/werkstatt`):
@@ -225,7 +264,9 @@ Topics (Basis einstellbar mit `MQTT_BASE_TOPIC`, Standard `heizung/werkstatt`):
 | `heizung/werkstatt/online` | ESP → | `1` / `0` (Last Will, retained) |
 | `heizung/werkstatt/cmd` | → ESP | Befehl als Text |
 | `heizung/werkstatt/ack` | ESP → | Antwort auf den Befehl (`ok: …` / `err: …`) |
-| `heizung/werkstatt/snap` | ESP → | letztes Kamerafoto als JPEG (retained) |
+| `heizung/werkstatt/snap/<n>` | ESP → | letztes Foto von Kamera n (1 oder 2) als JPEG (retained) |
+| `heizung/werkstatt/tl/days` | ESP → | Liste der Timelapse-Tage (JSON) |
+| `heizung/werkstatt/tl/frame` | ESP → | Timelapse-Bild: 6 Byte Uhrzeit `HHMMSS` + JPEG |
 | `heizung/werkstatt/live` | ESP → | Live-Einzelbilder als JPEG (nicht gespeichert) |
 
 Befehle (gleich für MQTT, Weboberfläche und seriellen Monitor):
@@ -241,8 +282,12 @@ Befehle (gleich für MQTT, Weboberfläche und seriellen Monitor):
 | `light on` / `light off` / `light toggle` | Licht |
 | `estop` | **Not-Aus**: Heizung sofort stromlos |
 | `reset` | Not-Aus zurücksetzen (Heizung bekommt wieder Strom, bleibt aber aus) |
-| `snap` | Foto von der Kamera aufnehmen und senden |
-| `live [sek]` / `live off` | Live-Bilder für X Sekunden (max. 120, die App verlängert automatisch) |
+| `snap [kamera]` | Foto aufnehmen und senden (Kamera 1 oder 2, Standard 1) |
+| `live <sek> [kamera]` / `live off` | Live-Bilder für X Sekunden (max. 120, die App verlängert automatisch) |
+| `tl <min> [heizung]` / `tl off` | Timelapse-Intervall, mit `heizung` nur während die Heizung läuft |
+| `tldays [kamera]` | Liste der aufgenommenen Tage senden |
+| `tlplay <kamera> <JJJJMMTT> [n]` | Timelapse eines Tages senden, nur jedes n-te Bild |
+| `tlstop` | Senden der Timelapse abbrechen |
 | `status` | Status sofort senden |
 
 Status-JSON (kurze Schlüssel, um Daten zu sparen):
@@ -258,7 +303,9 @@ Status-JSON (kurze Schlüssel, um Daten zu sparen):
 `v` Spannung · `ct` Brennkammer °C · `it` Heizungsfühler °C · `er` Fehlercode ·
 `t` Sensoren · `li` Licht · `es` Not-Aus · `al` Alarmtext · `mx` max. Laufzeit ·
 `rl` Restlaufzeit (min) · `th` Thermostat-Soll · `ts` Zeitstempel · `rs` WLAN-Signal ·
-`cam` Kamera eingerichtet · `sn` Zeitpunkt des letzten Fotos.
+`cam` Anzahl Kameras · `cn` Kameranamen · `sn` Zeitpunkt des letzten Fotos je Kamera ·
+`sd` freier Speicher auf der microSD (MB) · `tl` Timelapse-Intervall (min, 0 = aus) ·
+`tlh` Timelapse nur bei Heizbetrieb.
 
 ---
 
@@ -328,7 +375,8 @@ include/dashboard_html.h  automatisch erzeugt aus docs/index.html
 src/main.cpp            Logik: Befehle, Sicherheit, MQTT, Webserver
 src/HeaterBle.*         Bluetooth-Protokoll der Heizung
 src/Sensors.*           DS18B20-Auslesung
-src/Camera.*            Foto von der Reolink-Kamera holen
+src/Camera.*            Fotos von den Reolink-Kameras holen
+src/Timelapse.*         Timelapse auf microSD (Aufnahme, Liste, Abspielen)
 docs/index.html         Dashboard / iPhone-App (online + lokal)
 docs/manifest.webmanifest, docs/sw.js, docs/icons/   App-Icon und Offline-Start
 tools/embed_web.py      packt das Dashboard in die Firmware

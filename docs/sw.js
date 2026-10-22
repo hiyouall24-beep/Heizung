@@ -1,5 +1,5 @@
 // Service Worker: App startet auch ohne Netz sofort (Daten kommen dann per MQTT).
-const CACHE = 'heizung-v1';
+const CACHE = 'heizung-v2';
 const SHELL = ['./', 'index.html', 'manifest.webmanifest', 'icons/icon-180.png', 'icons/icon-192.png', 'icons/icon-512.png'];
 const LIBS = ['https://cdnjs.cloudflare.com/ajax/libs/mqtt/5.10.1/mqtt.min.js'];
 

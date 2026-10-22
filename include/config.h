@@ -10,6 +10,7 @@
 #define PIN_ESTOP_RELAY    27   // Relaismodul in der 12-V-Zuleitung der Heizung
 #define PIN_ESTOP_BUTTON   33   // optionaler Not-Aus-Taster (Öffner gegen GND)
 #define PIN_STATUS_LED     2    // Onboard-LED
+// (microSD-Pins siehe Abschnitt Timelapse)
 
 // Pegel, mit dem das Licht-MOSFET-Modul einschaltet
 #define LIGHT_ACTIVE_HIGH  true
@@ -71,7 +72,10 @@
 
 // ------------------------------------------------------ Reolink-Kamera -----
 // Zugangsdaten in secrets.h (CAM_HOST, CAM_USER, CAM_PASS)
+#define CAM1_NAME     "Werkstatt"
+#define CAM2_NAME     "Roboter"
 #define CAM_CHANNEL   0        // bei NVR/Homehub: Kanalnummer der Kamera (0 = erste)
+#define CAM2_CHANNEL  0
 #define CAM_WIDTH     640      // Fotogröße fürs Handy (spart Daten: ~30-60 KB)
 #define CAM_HEIGHT    360      // 0 bei CAM_WIDTH = volle Auflösung (nicht empfohlen)
 #define CAM_MAX_BYTES 250000   // größere Bilder werden nicht übertragen
@@ -80,5 +84,13 @@
 #define CAM_LIVE_HEIGHT      270
 #define CAM_LIVE_INTERVAL_MS 700   // Pause zwischen zwei Bildern (ca. 1 Bild/s)
 #define CAM_LIVE_MAX_S       120   // Live stoppt automatisch, wenn die App sich nicht meldet
+
+// ------------------------------------------------- Timelapse (microSD) ------
+// microSD-Modul (SPI): CS=GPIO5, SCK=GPIO18, MISO=GPIO19, MOSI=GPIO23, VCC 3,3 V oder 5 V (je nach Modul)
+#define PIN_SD_CS            5
+#define TL_WIDTH             640   // Bildgröße der Timelapse-Bilder (~30-60 KB)
+#define TL_HEIGHT            360
+#define TL_MIN_FREE_MB       300   // darunter werden die ältesten Tage gelöscht
+#define TL_PLAY_INTERVAL_MS  400   // Abspielen über Internet: Pause zwischen zwei Bildern
 
 #define HOSTNAME "heizung"            // lokal erreichbar unter http://heizung.local

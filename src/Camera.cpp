@@ -13,6 +13,23 @@
 #define CAM_USER ""
 #define CAM_PASS ""
 #endif
+#ifndef CAM2_HOST
+#define CAM2_HOST ""
+#define CAM2_USER ""
+#define CAM2_PASS ""
+#endif
+
+struct CamCfg {
+  const char* host;
+  const char* user;
+  const char* pass;
+  const char* name;
+  uint8_t channel;
+};
+static const CamCfg kCams[] = {
+    {CAM_HOST, CAM_USER, CAM_PASS, CAM1_NAME, CAM_CHANNEL},
+    {CAM2_HOST, CAM2_USER, CAM2_PASS, CAM2_NAME, CAM2_CHANNEL},
+};
 
 namespace Camera {
 
@@ -31,11 +48,17 @@ static String urlEncode(const char* s) {
   return out;
 }
 
-bool enabled() { return strlen(CAM_HOST) > 0; }
+uint8_t count() {
+  if (!strlen(kCams[0].host)) return 0;
+  return strlen(kCams[1].host) ? 2 : 1;
+}
 
-bool snapshot(uint16_t width, uint16_t height, const std::function<bool(size_t)>& onStart,
+const char* name(uint8_t cam) { return cam < MAX_CAMS ? kCams[cam].name : ""; }
+
+bool snapshot(uint8_t cam, uint16_t width, uint16_t height,
+              const std::function<bool(size_t)>& onStart,
               const std::function<bool(const uint8_t*, size_t)>& onChunk, String& err) {
-  if (!enabled()) {
+  if (!enabled(cam)) {
     err = "keine Kamera eingerichtet";
     return false;
   }
@@ -44,9 +67,10 @@ bool snapshot(uint16_t width, uint16_t height, const std::function<bool(size_t)>
     return false;
   }
 
-  String url = String("http://") + CAM_HOST + "/cgi-bin/api.cgi?cmd=Snap&channel=" +
-               CAM_CHANNEL + "&rs=" + String(millis()) + "&user=" + urlEncode(CAM_USER) +
-               "&password=" + urlEncode(CAM_PASS);
+  const CamCfg& cfg = kCams[cam];
+  String url = String("http://") + cfg.host + "/cgi-bin/api.cgi?cmd=Snap&channel=" +
+               cfg.channel + "&rs=" + String(millis()) + "&user=" + urlEncode(cfg.user) +
+               "&password=" + urlEncode(cfg.pass);
   if (width > 0) url += "&width=" + String(width) + "&height=" + String(height);
 
   WiFiClient client;
