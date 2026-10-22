@@ -1,0 +1,290 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#16181d">
+<title>Standheizung</title>
+<style>
+:root{--bg:#f2f3f5;--card:#fff;--fg:#16181d;--mut:#6b7080;--line:#e2e4e9;--acc:#ff5a1f;--ok:#1f9d55;--warn:#d97706;--bad:#d62828;--btn:#eceef2}
+@media (prefers-color-scheme:dark){:root{--bg:#0f1114;--card:#1a1d22;--fg:#eef0f3;--mut:#9399a6;--line:#2a2e35;--btn:#262a31}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.4 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;padding:16px;padding-bottom:40px}
+main{max-width:560px;margin:0 auto;display:grid;gap:12px}
+header{display:flex;align-items:center;justify-content:space-between;gap:8px}
+h1{font-size:22px;margin:0}
+.badge{font-size:13px;padding:4px 10px;border-radius:99px;background:var(--btn);color:var(--mut);white-space:nowrap}
+.badge.on{background:color-mix(in srgb,var(--ok) 18%,transparent);color:var(--ok)}
+.badge.off{background:color-mix(in srgb,var(--bad) 18%,transparent);color:var(--bad)}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px}
+.card h2{font-size:13px;text-transform:uppercase;letter-spacing:.06em;color:var(--mut);margin:0 0 10px}
+.big{font-size:30px;font-weight:650}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.kv{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:8px 16px;margin-top:12px;font-size:14px}
+.kv div span{display:block;color:var(--mut);font-size:12px}
+button,select,input{font:inherit;color:inherit}
+button{border:0;border-radius:10px;padding:12px 16px;background:var(--btn);cursor:pointer;font-weight:600;min-height:46px}
+button.pri{background:var(--acc);color:#fff}
+button.danger{background:var(--bad);color:#fff}
+button:disabled{opacity:.45;cursor:default}
+select,input{background:var(--btn);border:1px solid var(--line);border-radius:10px;padding:10px;min-height:46px;max-width:100%}
+.flex1{flex:1}
+.temp{font-size:34px;font-weight:650}
+.temp small{font-size:15px;color:var(--mut);font-weight:500}
+.banner{border-radius:12px;padding:12px 14px;font-weight:600}
+.banner.bad{background:var(--bad);color:#fff}
+.banner.warn{background:color-mix(in srgb,var(--warn) 20%,var(--card));border:1px solid var(--warn)}
+.estop{width:100%;font-size:20px;padding:18px;border-radius:14px;letter-spacing:.04em}
+.seg{display:flex;background:var(--btn);border-radius:10px;padding:3px;gap:3px}
+.seg button{flex:1;min-height:38px;padding:6px;background:none;font-weight:500;font-size:14px}
+.seg button.act{background:var(--card);box-shadow:0 1px 2px rgba(0,0,0,.15)}
+input[type=range]{width:100%;padding:0;accent-color:var(--acc);border:0;background:none}
+.mut{color:var(--mut);font-size:13px}
+#toast{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);background:var(--fg);color:var(--bg);padding:10px 16px;border-radius:10px;font-size:14px;opacity:0;transition:opacity .3s;pointer-events:none;max-width:90vw}
+#toast.show{opacity:1}
+dialog{border:0;border-radius:14px;background:var(--card);color:var(--fg);width:min(420px,92vw)}
+dialog label{display:block;font-size:13px;color:var(--mut);margin:10px 0 4px}
+dialog input{width:100%}
+.hide{display:none!important}
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Standheizung</h1>
+    <div class="row">
+      <span id="conn" class="badge">verbinde …</span>
+      <button id="cfgBtn" title="Einstellungen" style="min-height:36px;padding:6px 10px">⚙</button>
+    </div>
+  </header>
+
+  <div id="estopBanner" class="banner bad hide">NOT-AUS AKTIV – Heizung ist stromlos</div>
+  <div id="alarm" class="banner warn hide"></div>
+
+  <section class="card">
+    <h2>Heizung</h2>
+    <div class="row" style="justify-content:space-between">
+      <div class="big" id="hStatus">–</div>
+      <div class="mut" id="hLeft"></div>
+    </div>
+    <div class="row" style="margin-top:12px">
+      <select id="runtime" class="flex1" aria-label="Laufzeit">
+        <option value="30">30 min</option><option value="60">1 Std</option>
+        <option value="90">1,5 Std</option><option value="120" selected>2 Std</option>
+        <option value="180">3 Std</option><option value="240">4 Std</option>
+      </select>
+      <button class="pri flex1" id="btnOn">Starten</button>
+      <button class="flex1" id="btnOff">Aus</button>
+    </div>
+
+    <div style="margin-top:16px">
+      <div class="seg" id="modeSeg">
+        <button data-m="level">Stufe</button>
+        <button data-m="temp">Temperatur</button>
+        <button data-m="thermo">Thermostat</button>
+      </div>
+      <div style="margin-top:12px">
+        <div class="row" style="justify-content:space-between"><span id="setLabel">Stufe</span><b id="setVal">–</b></div>
+        <input type="range" id="setRange" min="1" max="10" step="1">
+        <div class="mut" id="modeHint"></div>
+      </div>
+    </div>
+
+    <div class="kv">
+      <div><span>Spannung</span><b id="kV">–</b></div>
+      <div><span>Brennkammer</span><b id="kCt">–</b></div>
+      <div><span>Heizungsfühler</span><b id="kIt">–</b></div>
+      <div><span>Bluetooth</span><b id="kBle">–</b></div>
+    </div>
+  </section>
+
+  <section class="grid2">
+    <div class="card"><h2 id="n0">Sensor 1</h2><div class="temp" id="t0">–</div></div>
+    <div class="card"><h2 id="n1">Sensor 2</h2><div class="temp" id="t1">–</div></div>
+  </section>
+
+  <section class="card row" style="justify-content:space-between">
+    <div><h2 style="margin:0">Licht</h2><div class="big" id="lState" style="font-size:22px">–</div></div>
+    <button id="btnLight" style="min-width:130px">Umschalten</button>
+  </section>
+
+  <section class="card">
+    <h2>Not-Aus</h2>
+    <button class="danger estop" id="btnEstop">NOT-AUS</button>
+    <button id="btnReset" class="hide" style="width:100%;margin-top:10px">Not-Aus zurücksetzen</button>
+    <p class="mut" style="margin:10px 0 0">Trennt die Heizung sofort vom Strom. Nur im Notfall – der normale Nachlauf zum Abkühlen entfällt.</p>
+  </section>
+
+  <p class="mut" id="foot" style="text-align:center"></p>
+</main>
+
+<dialog id="cfg">
+  <form method="dialog">
+    <h3 style="margin-top:0">MQTT-Verbindung</h3>
+    <label>Broker-Adresse<input id="cHost" placeholder="xxxx.s1.eu.hivemq.cloud" autocomplete="off"></label>
+    <label>WebSocket-Port (HiveMQ: 8884)<input id="cPort" type="number" value="8884"></label>
+    <label>Benutzer<input id="cUser" autocomplete="username"></label>
+    <label>Passwort<input id="cPass" type="password" autocomplete="current-password"></label>
+    <label>Basis-Topic<input id="cBase" value="heizung/bus"></label>
+    <div class="row" style="margin-top:16px;justify-content:flex-end">
+      <button value="cancel">Abbrechen</button><button class="pri" value="ok" id="cSave">Speichern</button>
+    </div>
+  </form>
+</dialog>
+<div id="toast"></div>
+
+<script>
+const $ = id => document.getElementById(id);
+const STEPS = ['Aus', 'Selbsttest', 'Zündet', 'Läuft', 'Kühlt ab'];
+let S = {}, online = null, mode = 'level', lastRx = 0, transport = null, dragging = false;
+
+function toast(t){ const e=$('toast'); e.textContent=t; e.classList.add('show'); clearTimeout(e._t); e._t=setTimeout(()=>e.classList.remove('show'),3500); }
+const fmt = (v,u,d=1) => v==null ? '–' : (typeof v==='number' ? v.toFixed(d).replace('.',',') : v)+u;
+
+function render(){
+  const s = S, ble = s.ble===1, valid = ble && s.st!=null;
+  $('estopBanner').classList.toggle('hide', !s.es);
+  $('alarm').classList.toggle('hide', !s.al || !!s.es && s.al.startsWith('NOT-AUS'));
+  $('alarm').textContent = s.al || '';
+  $('btnReset').classList.toggle('hide', !s.es);
+  $('btnEstop').disabled = !!s.es;
+
+  let st = '–';
+  if (s.es) st = 'Stromlos';
+  else if (!ble) st = 'Keine Verbindung';
+  else if (valid) st = s.er ? 'Fehler E'+s.er : (STEPS[s.st] ?? 'Status '+s.st);
+  $('hStatus').textContent = st;
+  $('hLeft').textContent = s.rl!=null ? 'noch '+s.rl+' min' : '';
+  ['btnOn','runtime'].forEach(id => $(id).disabled = !!s.es);
+
+  if (!dragging) {
+    mode = s.th!=null ? 'thermo' : (s.md===2 ? 'temp' : 'level');
+    setRange(mode==='thermo' ? s.th : mode==='temp' ? s.tt : s.lv);
+  }
+  document.querySelectorAll('#modeSeg button').forEach(b=>b.classList.toggle('act', b.dataset.m===mode));
+
+  $('kV').textContent = valid ? fmt(s.v,' V') : '–';
+  $('kCt').textContent = valid ? fmt(s.ct,' °C',0) : '–';
+  $('kIt').textContent = valid ? fmt(s.it,' °C',0) : '–';
+  $('kBle').textContent = ble ? 'verbunden' : 'getrennt';
+
+  (s.t||[]).forEach((t,i)=>{ if($('t'+i)) $('t'+i).innerHTML = t==null ? '<small>kein Sensor</small>' : fmt(t,'')+'<small> °C</small>'; });
+  (s.n||[]).forEach((n,i)=>{ if($('n'+i)) $('n'+i).textContent = n; });
+  $('lState').textContent = s.li ? 'An' : 'Aus';
+  $('btnLight').textContent = s.li ? 'Ausschalten' : 'Einschalten';
+
+  const c = $('conn');
+  const age = s.ts ? Math.round(Date.now()/1000 - s.ts) : null;
+  if (online===false){ c.textContent='ESP offline'; c.className='badge off'; }
+  else if (online){ c.textContent='online'; c.className='badge on'; }
+  let foot = '';
+  if (s.ts) foot = 'Stand: '+new Date(s.ts*1000).toLocaleString('de-DE')+(age>120?' ('+Math.round(age/60)+' min alt)':'');
+  if (s.rs) foot += (foot?' · ':'')+'WLAN '+s.rs+' dBm';
+  $('foot').textContent = foot;
+}
+
+function setRange(v){
+  const r = $('setRange');
+  const cfg = {level:[1,10,1,'Stufe','',''], temp:[8,36,1,'Solltemperatur',' °C','Regelt über den eingebauten Fühler der Heizung.'],
+               thermo:[5,30,0.5,'Solltemperatur',' °C','ESP32 regelt die Stufe über Sensor „'+((S.n||[])[0]||'1')+'“.']}[mode];
+  r.min=cfg[0]; r.max=cfg[1]; r.step=cfg[2]; $('setLabel').textContent=cfg[3]; $('modeHint').textContent=cfg[5];
+  if (v!=null) r.value=v;
+  $('setVal').textContent = v==null ? '–' : String(r.value).replace('.',',')+cfg[4];
+  r._unit = cfg[4];
+}
+
+function send(c){
+  if (!transport) return toast('Nicht verbunden');
+  transport.send(c);
+}
+
+$('btnOn').onclick = () => send('on '+$('runtime').value);
+$('btnOff').onclick = () => send('off');
+$('btnLight').onclick = () => send(S.li ? 'light off' : 'light on');
+$('btnEstop').onclick = () => { if (confirm('NOT-AUS auslösen? Die Heizung wird sofort stromlos.')) send('estop'); };
+$('btnReset').onclick = () => { if (confirm('Not-Aus zurücksetzen? Die Heizung bekommt wieder Strom (bleibt aus).')) send('reset'); };
+document.querySelectorAll('#modeSeg button').forEach(b => b.onclick = () => {
+  mode = b.dataset.m; dragging = true;
+  document.querySelectorAll('#modeSeg button').forEach(x=>x.classList.toggle('act', x===b));
+  setRange(mode==='level' ? (S.lv||5) : mode==='temp' ? (S.tt||20) : (S.th||20));
+  $('setRange').dispatchEvent(new Event('change'));
+});
+$('setRange').oninput = e => { dragging = true; $('setVal').textContent = String(e.target.value).replace('.',',')+e.target._unit; };
+$('setRange').onchange = e => {
+  send((mode==='level'?'level ':mode==='temp'?'temp ':'thermo ')+e.target.value);
+  setTimeout(()=>dragging=false, 8000);
+};
+
+// ---------- Transport 1: direkt am ESP32 (http://heizung.local) ----------
+function localTransport(){
+  online = true;
+  const poll = async () => {
+    try { const r = await fetch('api/state',{cache:'no-store'}); S = await r.json(); online = true; }
+    catch(e){ online = false; }
+    render();
+  };
+  poll(); setInterval(poll, 3000);
+  $('cfgBtn').classList.add('hide');
+  return { send: async c => {
+    const r = await fetch('api/cmd',{method:'POST',body:new URLSearchParams({c})});
+    toast(await r.text()); poll();
+  }};
+}
+
+// ---------- Transport 2: über MQTT (z. B. auf GitHub Pages gehostet) ----------
+function loadCfg(){ try { return JSON.parse(localStorage.getItem('heizCfg')||'null'); } catch(e){ return null; } }
+function openCfg(){
+  const c = loadCfg() || {};
+  $('cHost').value=c.host||''; $('cPort').value=c.port||8884; $('cUser').value=c.user||''; $('cPass').value=c.pass||''; $('cBase').value=c.base||'heizung/bus';
+  $('cfg').showModal();
+}
+$('cfgBtn').onclick = openCfg;
+$('cfg').addEventListener('close', () => {
+  if ($('cfg').returnValue!=='ok') return;
+  const c = {host:$('cHost').value.trim(), port:+$('cPort').value, user:$('cUser').value, pass:$('cPass').value, base:$('cBase').value.trim().replace(/\/$/,'')};
+  try { localStorage.setItem('heizCfg', JSON.stringify(c)); } catch(e){}
+  location.reload();
+});
+
+function mqttTransport(){
+  const c = loadCfg();
+  if (!c || !c.host){ $('conn').textContent='nicht eingerichtet'; openCfg(); return null; }
+  const s = document.createElement('script');
+  s.src = 'https://cdnjs.cloudflare.com/ajax/libs/mqtt/5.10.1/mqtt.min.js';
+  let client = null;
+  s.onload = () => {
+    client = mqtt.connect('wss://'+c.host+':'+c.port+'/mqtt', {username:c.user, password:c.pass, clean:true, reconnectPeriod:5000, connectTimeout:15000});
+    client.on('connect', () => { $('conn').textContent='Broker ok'; client.subscribe(c.base+'/#'); });
+    client.on('close', () => { $('conn').textContent='getrennt'; $('conn').className='badge off'; });
+    client.on('error', e => toast('MQTT: '+e.message));
+    client.on('message', (t, m) => {
+      const msg = m.toString();
+      if (t===c.base+'/state'){ try { S = JSON.parse(msg); lastRx = Date.now(); } catch(e){} }
+      else if (t===c.base+'/online') online = msg==='1';
+      else if (t===c.base+'/ack') toast(msg);
+      render();
+    });
+  };
+  s.onerror = () => {
+    if (!s.src.includes('unpkg')) { const f=s.cloneNode(); f.src='https://unpkg.com/mqtt@5.10.1/dist/mqtt.min.js'; f.onload=s.onload; f.onerror=()=>toast('MQTT-Bibliothek konnte nicht geladen werden'); document.head.appendChild(f); }
+  };
+  document.head.appendChild(s);
+  return { send: cmd => {
+    if (!client || !client.connected) return toast('Nicht mit Broker verbunden');
+    if (online===false) toast('ESP32 ist offline – Befehl geht verloren');
+    client.publish(c.base+'/cmd', cmd, {qos:1});
+  }};
+}
+
+(async () => {
+  setRange(null);
+  let local = false;
+  if (location.protocol.startsWith('http')) {
+    try { const r = await fetch('api/state',{cache:'no-store'}); local = r.ok && (r.headers.get('content-type')||'').includes('json'); } catch(e){}
+  }
+  transport = local ? localTransport() : mqttTransport();
+})();
+</script>
+</body>
+</html>
