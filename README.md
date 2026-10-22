@@ -135,6 +135,26 @@ und wann der letzte Status gesendet wurde.
 
 ---
 
+## 4a. Als App aufs iPhone
+
+Das Dashboard ist eine installierbare Web-App (PWA): eigenes Icon, Vollbild ohne Safari-Leiste,
+startet sofort.
+
+1. GitHub Pages einmalig aktivieren: Repository → **Settings → Pages** →
+   *Source: Deploy from a branch* → Branch **`main`**, Ordner **`/docs`** → **Save**.
+   Nach 1–2 Minuten ist die App erreichbar unter
+   **<https://hiyouall24-beep.github.io/Heizung/>**
+2. Diese Adresse auf dem iPhone in **Safari** öffnen (nicht Chrome).
+3. Unten auf **Teilen** (Quadrat mit Pfeil) → **„Zum Home-Bildschirm“** → **Hinzufügen**.
+4. Die App „Heizung“ vom Home-Bildschirm starten, auf ⚙ tippen und die MQTT-Zugangsdaten
+   eintragen (Broker-Adresse, Port `8884`, Benutzer, Passwort).
+   Wichtig: Die App auf dem Home-Bildschirm hat einen eigenen Speicher – die Zugangsdaten
+   also **in der App** eintragen, nicht nur in Safari.
+
+Danach: App antippen → **Starten**. Eine Benachrichtigung (`ack`) bestätigt jeden Befehl.
+
+---
+
 ## 5. Befehle & MQTT-Topics
 
 Topics (Basis einstellbar mit `MQTT_BASE_TOPIC`, Standard `heizung/bus`):
@@ -242,6 +262,7 @@ include/dashboard_html.h  automatisch erzeugt aus docs/index.html
 src/main.cpp            Logik: Befehle, Sicherheit, MQTT, Webserver
 src/HeaterBle.*         Bluetooth-Protokoll der Heizung
 src/Sensors.*           DS18B20-Auslesung
-docs/index.html         Dashboard (online + lokal)
+docs/index.html         Dashboard / iPhone-App (online + lokal)
+docs/manifest.webmanifest, docs/sw.js, docs/icons/   App-Icon und Offline-Start
 tools/embed_web.py      packt das Dashboard in die Firmware
 ```
