@@ -1,15 +1,16 @@
 # ESP32 Standheizungs-Steuerung (VEVOR Diesel-Luftheizung)
 
 Firmware für einen ESP32, der eine VEVOR-Diesel-Luftheizung mit Bluetooth-App
-(„AirHeaterBLE“) fernsteuert.
+(„AirHeaterBLE“) in der Werkstatt fernsteuert.
 
 **Funktionen**
 
 - **Heizung per Bluetooth (BLE):** an/aus, Stufe 1–10, Solltemperatur 8–36 °C, Status auslesen
   (Spannung, Brennkammertemperatur, Fehlercodes)
-- **2 Temperatursensoren** (DS18B20), z. B. innen und außen
-- **ESP-Thermostat:** regelt die Heizstufe anhand deines eigenen Innensensors
+- **2 Temperatursensoren** (DS18B20), z. B. Werkstatt und außen
+- **ESP-Thermostat:** regelt die Heizstufe anhand deines eigenen Sensors in der Werkstatt
 - **12-V-Licht** schalten
+- **Reolink-Kamera:** Foto auf Knopfdruck in der App (nur ca. 30–60 KB pro Foto)
 - **Not-Aus:** ein Relais trennt die Heizung sofort vom Strom (per App, Weboberfläche oder Taster).
   Der Not-Aus bleibt auch nach einem Neustart aktiv, bis er zurückgesetzt wird.
 - **Von zu Hause steuern** über MQTT, mit sehr wenig Datenverbrauch (ca. 3–5 MB im Monat)
@@ -19,11 +20,15 @@ Firmware für einen ESP32, der eine VEVOR-Diesel-Luftheizung mit Bluetooth-App
   Fehlermeldungen der Heizung
 
 ```
- Handy (überall)                   Bus / Garage
+ Handy (überall)                   Werkstatt
 ┌──────────────┐   Internet   ┌───────────────┐  WLAN  ┌───────────┐  Bluetooth  ┌──────────┐
 │ Dashboard    │◄────────────►│ MQTT-Broker   │◄──────►│  ESP32    │◄───────────►│ Heizung  │
 │ (docs/)      │  WebSocket   │ (HiveMQ Cloud)│  TLS   │           │             └──────────┘
 └──────────────┘              └───────────────┘        │ DS18B20 x2, Licht, Not-Aus-Relais
+                                                        └─────┬─────┘
+                                                     WLAN/LAN │ Foto (HTTP)
+                                                        ┌─────┴─────┐
+                                                        │  Reolink  │
                                                         └───────────┘
 ```
 
@@ -34,17 +39,19 @@ Firmware für einen ESP32, der eine VEVOR-Diesel-Luftheizung mit Bluetooth-App
 | Teil | Empfehlung |
 |---|---|
 | ESP32 | ESP32-DevKit (WROOM-32), **kein** ESP32-S2 (hat kein Bluetooth) |
-| Spannungsversorgung | Step-Down-Wandler 12 V → 5 V (min. 1 A) an VIN/5V |
+| 12-V-Versorgung | Netzteil 12 V mit **mindestens 15 A** (die Glühkerze zieht beim Start ca. 8–10 A) oder Batterie mit Ladegerät |
+| Spannungsversorgung ESP32 | Step-Down-Wandler 12 V → 5 V (min. 1 A) an VIN/5V |
 | Temperatursensoren | 2× DS18B20 (wasserdichte Kabelversion) + 1× Widerstand 4,7 kΩ |
 | Licht | MOSFET-Modul, das mit 3,3 V schaltet (z. B. **AOD4184/D4184-Modul** oder IRLZ44N). **Nicht** das IRF520-Modul. |
 | Not-Aus | KFZ-Relais 12 V/30 A **Wechsler** (Klemmen 30/87/87a) + Relaismodul oder Transistor zum Ansteuern; optional Not-Aus-Pilztaster (Öffner) |
-| WLAN am Fahrzeug | Heim-WLAN in Reichweite oder ein LTE-Router/Hotspot mit SIM-Karte |
+| WLAN in der Werkstatt | WLAN mit Internet (Router, Repeater oder LTE-Router) |
+| Kamera (optional) | Reolink-Kamera mit WLAN/LAN im **gleichen Netz** wie der ESP32 (keine reinen Akku-/4G-Modelle, siehe unten) |
 | Sicherungen | Flachsicherungen: Heizung 15 A, ESP32 2 A, Licht passend |
 
 ### Verdrahtung
 
 ```
-12V (+) ──[15A]──┬──[Not-Aus-Pilz, Öffner (optional, rein mechanisch)]── 30 ┐ KFZ-Relais
+12V (+) ──[20A]──┬──[Not-Aus-Pilz, Öffner (optional, rein mechanisch)]── 30 ┐ KFZ-Relais
                  │                                                     87a ├──► Heizung (+)
                  │                                                        ┘   (87a = Öffner)
                  ├──[2A]──► Step-Down 12→5V ──► ESP32 VIN / GND
@@ -131,7 +138,7 @@ und wann der letzte Status gesendet wurde.
 |---|---|---|
 | Stufe | du (feste Stufe 1–10) | – |
 | Temperatur | die Heizung selbst | Fühler in der Heizung |
-| Thermostat | der ESP32 passt die Stufe an | dein Sensor 1 (z. B. „Innen“) |
+| Thermostat | der ESP32 passt die Stufe an | dein Sensor 1 (z. B. „Werkstatt“) |
 
 ---
 
@@ -155,16 +162,59 @@ Danach: App antippen → **Starten**. Eine Benachrichtigung (`ack`) bestätigt j
 
 ---
 
+## 4b. Reolink-Kamera
+
+Die App kann ein **aktuelles Foto** aus der Werkstatt anzeigen, z. B. um nach dem Start zu
+prüfen, ob alles in Ordnung ist. Der ESP32 holt das Bild im lokalen Netz von der Kamera
+und schickt es nur auf Knopfdruck über MQTT. Am Router muss **nichts freigegeben** werden.
+
+**Einrichten:**
+
+1. In der Reolink-App: Kamera → Einstellungen → **Netzwerk → Erweitert → Server-Einstellungen**
+   (bzw. „Netzwerkdienste“) → **HTTP** einschalten (Port 80).
+2. Im Router der Kamera eine **feste IP-Adresse** geben (z. B. `192.168.178.50`).
+3. Empfohlen: in der Kamera einen zusätzlichen Benutzer mit der Rolle **Gast** anlegen und
+   diesen für den ESP32 verwenden.
+4. In `include/secrets.h` eintragen:
+   ```cpp
+   #define CAM_HOST "192.168.178.50"
+   #define CAM_USER "esp32"
+   #define CAM_PASS "kamerapasswort"
+   ```
+5. Neu flashen. In der App erscheint die Karte **Kamera** mit dem Knopf **Foto aufnehmen**.
+
+Das Foto wird in 640 × 360 angefordert (`CAM_WIDTH`/`CAM_HEIGHT` in `config.h`), das sind
+etwa 30–60 KB. Das letzte Foto bleibt auf dem Broker gespeichert und wird beim Öffnen der App
+sofort angezeigt. Hängt die Kamera an einem Reolink-NVR/Home Hub, trägst du dessen IP ein
+und wählst die Kamera mit `CAM_CHANNEL`.
+
+**Live-Video** geht weiterhin über die normale Reolink-App. Für einen Videostream ist der ESP32
+zu schwach, außerdem würde das viel Datenvolumen verbrauchen.
+
+**Funktioniert nicht mit:** reinen Akku-Kameras (Argus-Serie) und 4G-Kameras (Go-Serie).
+Diese haben kein HTTP-Interface im lokalen Netz.
+
+**Fehlersuche:** Die Meldung erscheint unten in der App. „kein JPEG“ bedeutet falscher
+Benutzer oder falsches Passwort. „Kamera nicht erreichbar“ bedeutet falsche IP oder HTTP ist
+ausgeschaltet. Test im Browser im selben WLAN:
+`http://<kamera-ip>/cgi-bin/api.cgi?cmd=Snap&channel=0&rs=x&user=<benutzer>&password=<passwort>`
+muss ein Bild zeigen. Liefert die Kamera trotz `CAM_WIDTH` ein sehr großes Bild (ältere
+Firmware ignoriert die Größe), meldet die App „Bild zu groß“ – dann Kamera-Firmware
+aktualisieren.
+
+---
+
 ## 5. Befehle & MQTT-Topics
 
-Topics (Basis einstellbar mit `MQTT_BASE_TOPIC`, Standard `heizung/bus`):
+Topics (Basis einstellbar mit `MQTT_BASE_TOPIC`, Standard `heizung/werkstatt`):
 
 | Topic | Richtung | Inhalt |
 |---|---|---|
-| `heizung/bus/state` | ESP → | Status als JSON (retained) |
-| `heizung/bus/online` | ESP → | `1` / `0` (Last Will, retained) |
-| `heizung/bus/cmd` | → ESP | Befehl als Text |
-| `heizung/bus/ack` | ESP → | Antwort auf den Befehl (`ok: …` / `err: …`) |
+| `heizung/werkstatt/state` | ESP → | Status als JSON (retained) |
+| `heizung/werkstatt/online` | ESP → | `1` / `0` (Last Will, retained) |
+| `heizung/werkstatt/cmd` | → ESP | Befehl als Text |
+| `heizung/werkstatt/ack` | ESP → | Antwort auf den Befehl (`ok: …` / `err: …`) |
+| `heizung/werkstatt/snap` | ESP → | letztes Kamerafoto als JPEG (retained) |
 
 Befehle (gleich für MQTT, Weboberfläche und seriellen Monitor):
 
@@ -179,13 +229,14 @@ Befehle (gleich für MQTT, Weboberfläche und seriellen Monitor):
 | `light on` / `light off` / `light toggle` | Licht |
 | `estop` | **Not-Aus**: Heizung sofort stromlos |
 | `reset` | Not-Aus zurücksetzen (Heizung bekommt wieder Strom, bleibt aber aus) |
+| `snap` | Foto von der Kamera aufnehmen und senden |
 | `status` | Status sofort senden |
 
 Status-JSON (kurze Schlüssel, um Daten zu sparen):
 
 ```json
 {"ble":1,"on":1,"st":3,"md":1,"lv":6,"tt":20,"v":12.6,"ct":148,"it":19,"er":0,
- "t":[18.4,-3.1],"n":["Innen","Aussen"],"li":0,"es":0,"mx":120,"rl":87,
+ "t":[18.4,-3.1],"n":["Werkstatt","Aussen"],"li":0,"es":0,"mx":120,"rl":87,
  "ts":1792650000,"up":5000,"rs":-61}
 ```
 
@@ -193,7 +244,8 @@ Status-JSON (kurze Schlüssel, um Daten zu sparen):
 4 abkühlen) · `md` Modus (1 Stufe, 2 Temperatur) · `lv` Stufe · `tt` Solltemperatur ·
 `v` Spannung · `ct` Brennkammer °C · `it` Heizungsfühler °C · `er` Fehlercode ·
 `t` Sensoren · `li` Licht · `es` Not-Aus · `al` Alarmtext · `mx` max. Laufzeit ·
-`rl` Restlaufzeit (min) · `th` Thermostat-Soll · `ts` Zeitstempel · `rs` WLAN-Signal.
+`rl` Restlaufzeit (min) · `th` Thermostat-Soll · `ts` Zeitstempel · `rs` WLAN-Signal ·
+`cam` Kamera eingerichtet · `sn` Zeitpunkt des letzten Fotos.
 
 ---
 
@@ -210,6 +262,7 @@ Die Firmware ist auf möglichst wenig Datenverkehr ausgelegt:
 - Bluetooth-Abfragen der Heizung laufen lokal und kosten kein Internet
 
 Grob gerechnet sind das **ca. 100–150 KB pro Tag, also etwa 3–5 MB im Monat**.
+Jedes Kamerafoto kostet zusätzlich etwa 30–60 KB (einmal hoch zum Broker, einmal runter aufs Handy).
 Hinweis: Manche Mobilfunktarife rechnen in 100-KB-Blöcken ab – bei einer dauerhaften
 Verbindung fällt das kaum ins Gewicht. Alle Intervalle findest du in `include/config.h`.
 
@@ -221,7 +274,7 @@ Verbindung fällt das kaum ins Gewicht. Alle Intervalle findest du in `include/c
 |---|---|---|
 | Max. Laufzeit | `MAX_RUNTIME_MIN_DEFAULT` | Heizung geht nach Ablauf aus – auch wenn sie mit der Original-Fernbedienung gestartet wurde |
 | Übertemperatur | `OVERTEMP_CUTOFF_C` | Sensor 1 zu warm → Heizung aus, Start wird verweigert |
-| Unterspannung | `LOW_VOLTAGE_CUTOFF` | Batterie zu leer (60 s lang) → Heizung aus |
+| Unterspannung | `LOW_VOLTAGE_CUTOFF` | Spannung zu niedrig (60 s lang) → Heizung aus. Schützt eine Batterie und erkennt ein zu schwaches Netzteil |
 | Fehler der Heizung | – | Fehlercode wird als Alarm angezeigt (E1 Startfehler, E2 kein Brennstoff, …) |
 | „Aus“ wird wiederholt | – | bis die Heizung das Ausschalten bestätigt |
 | Not-Aus | Relais + optional Taster | Strom weg, bleibt über Neustarts gespeichert |
@@ -262,6 +315,7 @@ include/dashboard_html.h  automatisch erzeugt aus docs/index.html
 src/main.cpp            Logik: Befehle, Sicherheit, MQTT, Webserver
 src/HeaterBle.*         Bluetooth-Protokoll der Heizung
 src/Sensors.*           DS18B20-Auslesung
+src/Camera.*            Foto von der Reolink-Kamera holen
 docs/index.html         Dashboard / iPhone-App (online + lokal)
 docs/manifest.webmanifest, docs/sw.js, docs/icons/   App-Icon und Offline-Start
 tools/embed_web.py      packt das Dashboard in die Firmware

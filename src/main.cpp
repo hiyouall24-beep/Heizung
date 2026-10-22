@@ -3,6 +3,7 @@
 //  - VEVOR Diesel-Luftheizung über Bluetooth LE
 //  - 2x DS18B20 Temperatursensoren
 //  - 12-V-Licht über MOSFET
+//  - Foto von einer Reolink-Kamera auf Knopfdruck
 //  - Not-Aus (Relais trennt die Heizung vom Strom)
 //  - Fernsteuerung + Anzeige über MQTT (sehr wenig Datenverbrauch)
 //  - lokale Weboberfläche http://heizung.local
@@ -27,6 +28,7 @@
 #include "dashboard_html.h"
 #include "HeaterBle.h"
 #include "Sensors.h"
+#include "Camera.h"
 
 static HeaterBle heater;
 static Sensors sensors;
@@ -55,6 +57,8 @@ static uint32_t lastThermoMs = 0;
 
 static bool publishNow = true;       // nächsten Status sofort senden
 static uint32_t lastCommandMs = 0;
+static bool snapRequested = false;    // Foto per MQTT senden
+static uint32_t snapTs = 0;           // Zeitpunkt des letzten Fotos
 static uint32_t lastPublishMs = 0;
 static uint32_t mqttRetryMs = 0;
 static uint32_t mqttRetryDelay = 5000;
@@ -135,7 +139,7 @@ static String resetEstop() {
 // -------------------------------------------------------------- Befehle -----
 // Gemeinsame Befehle für MQTT, Weboberfläche und seriellen Monitor:
 //   on [minuten] | off | level 1-10 | temp 8-36 | thermo <°C>|off
-//   runtime <minuten> | light on|off|toggle | estop | reset | status
+//   runtime <minuten> | light on|off|toggle | snap | estop | reset | status
 static String handleCommand(String line) {
   line.trim();
   line.toLowerCase();
@@ -152,6 +156,11 @@ static String handleCommand(String line) {
   }
   if (c == "reset") return resetEstop();
   if (c == "status") return "ok";
+  if (c == "snap" || c == "foto") {
+    if (!Camera::enabled()) return "err: keine Kamera eingerichtet (CAM_HOST in secrets.h)";
+    snapRequested = true;
+    return "ok: Foto wird aufgenommen ...";
+  }
 
   if (c == "light" || c == "licht") {
     if (a == "on" || a == "an" || a == "1") lightOn = true;
@@ -247,6 +256,8 @@ static void buildState(JsonDocument& d) {
     else t.add(round1(v));
     n.add(kSensorNames[i]);
   }
+  if (Camera::enabled()) d["cam"] = 1;
+  if (snapTs) d["sn"] = snapTs;
   d["li"] = lightOn ? 1 : 0;
   d["es"] = estop ? 1 : 0;
   if (alarmMsg.length()) d["al"] = alarmMsg;
@@ -313,6 +324,35 @@ static void publishState() {
   }
 }
 
+// Foto von der Kamera holen und direkt (stückweise) per MQTT weiterreichen.
+// Retained, damit die App beim Öffnen das letzte Foto sofort anzeigt.
+static void sendSnapshot() {
+  snapRequested = false;
+  String topic = kBase + "/snap";
+  String err;
+  bool started = false;
+  bool ok = Camera::snapshot(
+      [&](size_t total) { return started = mqtt.beginPublish(topic.c_str(), total, true); },
+      [&](const uint8_t* d, size_t n) { return mqtt.write(d, n) == n; }, err);
+  if (started) {
+    if (ok) {
+      mqtt.endPublish();
+    } else {
+      // halb gesendetes Paket -> Verbindung neu aufbauen
+      net.stop();
+    }
+  }
+  if (ok) {
+    time_t ts = time(nullptr);
+    snapTs = ts > 1700000000 ? (uint32_t)ts : 1;
+    publishNow = true;
+    Serial.println(F("[CAM] Foto gesendet"));
+  } else {
+    Serial.printf("[CAM] Fehler: %s\n", err.c_str());
+    if (mqtt.connected()) mqtt.publish((kBase + "/ack").c_str(), ("err: Foto - " + err).c_str());
+  }
+}
+
 static void mqttLoop() {
   if (WiFi.status() != WL_CONNECTED) return;
 
@@ -336,6 +376,7 @@ static void mqttLoop() {
     }
   }
   mqtt.loop();
+  if (snapRequested) sendSnapshot();
 
   static bool pendingChange = false;
   uint32_t now = millis();
@@ -383,6 +424,21 @@ static void setupWeb() {
     if (!webAuth()) return;
     String res = handleCommand(web.arg("c"));
     web.send(res.startsWith("ok") ? 200 : 400, "text/plain; charset=utf-8", res);
+  });
+  web.on("/api/snap", HTTP_GET, [] {
+    if (!webAuth()) return;
+    String err;
+    bool started = false;
+    WiFiClient client = web.client();
+    bool ok = Camera::snapshot(
+        [&](size_t total) {
+          web.setContentLength(total);
+          web.sendHeader("Cache-Control", "no-store");
+          web.send(200, "image/jpeg", "");
+          return started = true;
+        },
+        [&](const uint8_t* d, size_t n) { return client.write(d, n) == n; }, err);
+    if (!ok && !started) web.send(502, "text/plain; charset=utf-8", err);
   });
   web.onNotFound([] { web.send(404, "text/plain", "404"); });
   web.begin();
@@ -543,7 +599,7 @@ void setup() {
 
   setupWeb();
   Serial.println(F("Befehle im seriellen Monitor: on [min] | off | level N | temp N | "
-                   "thermo N|off | light on|off | estop | reset"));
+                   "thermo N|off | light on|off | snap | estop | reset"));
 }
 
 void loop() {

@@ -119,6 +119,15 @@ dialog input{width:100%}
     <div class="card"><h2 id="n1">Sensor 2</h2><div class="temp" id="t1">–</div></div>
   </section>
 
+  <section class="card hide" id="camCard">
+    <h2>Kamera</h2>
+    <img id="camImg" alt="Kamerabild" style="width:100%;aspect-ratio:16/9;object-fit:cover;border-radius:10px;background:var(--btn);display:block">
+    <div class="row" style="justify-content:space-between;margin-top:10px">
+      <span class="mut" id="camTs">noch kein Foto</span>
+      <button id="btnSnap">Foto aufnehmen</button>
+    </div>
+  </section>
+
   <section class="card row" style="justify-content:space-between">
     <div><h2 style="margin:0">Licht</h2><div class="big" id="lState" style="font-size:22px">–</div></div>
     <button id="btnLight" style="min-width:130px">Umschalten</button>
@@ -141,7 +150,7 @@ dialog input{width:100%}
     <label>WebSocket-Port (HiveMQ: 8884)<input id="cPort" type="number" value="8884"></label>
     <label>Benutzer<input id="cUser" autocomplete="username"></label>
     <label>Passwort<input id="cPass" type="password" autocomplete="current-password"></label>
-    <label>Basis-Topic<input id="cBase" value="heizung/bus"></label>
+    <label>Basis-Topic<input id="cBase" value="heizung/werkstatt"></label>
     <div class="row" style="margin-top:16px;justify-content:flex-end">
       <button value="cancel">Abbrechen</button><button class="pri" value="ok" id="cSave">Speichern</button>
     </div>
@@ -189,6 +198,9 @@ function render(){
   $('lState').textContent = s.li ? 'An' : 'Aus';
   $('btnLight').textContent = s.li ? 'Ausschalten' : 'Einschalten';
 
+  $('camCard').classList.toggle('hide', !s.cam);
+  if (s.sn > 1) $('camTs').textContent = 'Foto: ' + new Date(s.sn*1000).toLocaleString('de-DE',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'});
+
   const c = $('conn');
   const age = s.ts ? Math.round(Date.now()/1000 - s.ts) : null;
   if (online===false){ c.textContent='ESP offline'; c.className='badge off'; }
@@ -216,6 +228,16 @@ function send(c){
 
 $('btnOn').onclick = () => send('on '+$('runtime').value);
 $('btnOff').onclick = () => send('off');
+function snapDone(){ clearTimeout(snapDone.t); $('btnSnap').disabled=false; $('btnSnap').textContent='Foto aufnehmen'; }
+function showSnap(blob){
+  const img = $('camImg'); if (img._url) URL.revokeObjectURL(img._url);
+  img._url = URL.createObjectURL(blob); img.src = img._url; snapDone();
+}
+$('btnSnap').onclick = () => {
+  $('btnSnap').disabled = true; $('btnSnap').textContent = 'lädt …';
+  snapDone.t = setTimeout(snapDone, 20000);
+  if (transport && transport.snap) transport.snap(); else send('snap');
+};
 $('btnLight').onclick = () => send(S.li ? 'light off' : 'light on');
 $('btnEstop').onclick = () => { if (confirm('NOT-AUS auslösen? Die Heizung wird sofort stromlos.')) send('estop'); };
 $('btnReset').onclick = () => { if (confirm('Not-Aus zurücksetzen? Die Heizung bekommt wieder Strom (bleibt aus).')) send('reset'); };
@@ -241,7 +263,12 @@ function localTransport(){
   };
   poll(); setInterval(poll, 3000);
   $('cfgBtn').classList.add('hide');
-  return { send: async c => {
+  return { snap: async () => {
+    try { const r = await fetch('api/snap?'+Date.now(),{cache:'no-store'});
+      if (!r.ok) throw new Error(await r.text());
+      showSnap(await r.blob()); $('camTs').textContent = 'Foto: '+new Date().toLocaleTimeString('de-DE');
+    } catch(e){ toast('Foto: '+e.message); snapDone(); }
+  }, send: async c => {
     const r = await fetch('api/cmd',{method:'POST',body:new URLSearchParams({c})});
     toast(await r.text()); poll();
   }};
@@ -251,7 +278,7 @@ function localTransport(){
 function loadCfg(){ try { return JSON.parse(localStorage.getItem('heizCfg')||'null'); } catch(e){ return null; } }
 function openCfg(){
   const c = loadCfg() || {};
-  $('cHost').value=c.host||''; $('cPort').value=c.port||8884; $('cUser').value=c.user||''; $('cPass').value=c.pass||''; $('cBase').value=c.base||'heizung/bus';
+  $('cHost').value=c.host||''; $('cPort').value=c.port||8884; $('cUser').value=c.user||''; $('cPass').value=c.pass||''; $('cBase').value=c.base||'heizung/werkstatt';
   $('cfg').showModal();
 }
 $('cfgBtn').onclick = openCfg;
@@ -274,7 +301,9 @@ function mqttTransport(){
     client.on('close', () => { $('conn').textContent='getrennt'; $('conn').className='badge off'; });
     client.on('error', e => toast('MQTT: '+e.message));
     client.on('message', (t, m) => {
+      if (t===c.base+'/snap') { if (m.length) showSnap(new Blob([m],{type:'image/jpeg'})); return; }
       const msg = m.toString();
+      if (t===c.base+'/ack' && msg.startsWith('err: Foto')) snapDone();
       if (t===c.base+'/state'){ try { S = JSON.parse(msg); lastRx = Date.now(); } catch(e){} }
       else if (t===c.base+'/online') online = msg==='1';
       else if (t===c.base+'/ack') toast(msg);

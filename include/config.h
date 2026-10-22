@@ -48,7 +48,7 @@
 #define LOW_VOLTAGE_DELAY_S     60    // so lange muss die Unterspannung anliegen
 
 // ------------------------------------------------------------ Sensoren ------
-#define SENSOR1_NAME        "Innen"
+#define SENSOR1_NAME        "Werkstatt"
 #define SENSOR2_NAME        "Aussen"
 // Optional feste Adressen (im seriellen Monitor beim Start angezeigt), sonst
 // Reihenfolge am Bus. Beispiel: {0x28,0xFF,0x64,0x1E,0x0F,0x16,0x03,0x5C}
@@ -68,5 +68,12 @@
 #define PUBLISH_HEARTBEAT_RUN_S  300  // Heizung an: spätestens alle 5 min ein Status
 #define PUBLISH_DELTA_TEMP       0.5f // Temperaturänderung, die sofort gemeldet wird
 #define PUBLISH_DELTA_VOLT       0.3f
+
+// ------------------------------------------------------ Reolink-Kamera -----
+// Zugangsdaten in secrets.h (CAM_HOST, CAM_USER, CAM_PASS)
+#define CAM_CHANNEL   0        // bei NVR/Homehub: Kanalnummer der Kamera (0 = erste)
+#define CAM_WIDTH     640      // Fotogröße fürs Handy (spart Daten: ~30-60 KB)
+#define CAM_HEIGHT    360      // 0 bei CAM_WIDTH = volle Auflösung (nicht empfohlen)
+#define CAM_MAX_BYTES 250000   // größere Bilder werden nicht übertragen
 
 #define HOSTNAME "heizung"            // lokal erreichbar unter http://heizung.local
